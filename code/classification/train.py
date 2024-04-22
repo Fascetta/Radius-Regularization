@@ -104,7 +104,7 @@ def getArguments():
 
 def main(args):
     device = args.device[0]
-    torch.cuda.set_device(device)
+    # torch.cuda.set_device(device)     deprecated
     torch.cuda.empty_cache()
 
     print("Running experiment: " + args.exp_name)
