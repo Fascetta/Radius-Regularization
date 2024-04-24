@@ -142,6 +142,7 @@ def main(args):
 
     best_acc = 0.0
     best_epoch = 0
+    NUM_ACCUMULATION_STEPS = 2
 
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
@@ -156,11 +157,13 @@ def main(args):
             y = y.to(device)
 
             logits = model(x)
-            loss = criterion(logits, y)
+            loss = criterion(logits, y) # Compute loss
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            optimizer.zero_grad() # Reset gradients tensoes
+            loss.backward() # Back-Propagation
+
+            if ((i + 1) % NUM_ACCUMULATION_STEPS == 0) or (i + 1  == len(train_loader)): # Gradient Accumulation
+                optimizer.step() # Update optimazer
 
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
