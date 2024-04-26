@@ -4,7 +4,7 @@
 *$py.class
 
 *data/
-*output/
+# *output/
 *.pth
 *.idea/
 *.idea/misc.xml
