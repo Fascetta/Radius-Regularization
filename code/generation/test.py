@@ -134,7 +134,7 @@ def main(args):
 
     if args.mode=="test_FID":
         print("Testing FID of model...")
-        test(model, train_loader, val_loader, test_loader, img_dim, device, args)
+        test(model, val_loader, test_loader, img_dim, device, args)
         
     elif args.mode=="visualize_embeddings":
         print("Visualizing embedding space of model...")

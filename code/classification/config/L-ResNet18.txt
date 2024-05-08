@@ -2,7 +2,7 @@
 
 # Output settings
 exp_name = L-ResNet18
-#output_dir = classification/output
+output_dir = classification/output
 
 # General settings
 device = cuda:0

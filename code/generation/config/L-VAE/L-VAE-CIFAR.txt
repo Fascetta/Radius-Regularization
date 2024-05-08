@@ -2,7 +2,7 @@
 
 # Output settings
 exp_name = L-VAE-CIFAR-10
-#output_dir = generation/output
+output_dir = generation/output
 
 # General settings
 device = cuda:0
