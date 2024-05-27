@@ -176,4 +176,4 @@ if __name__ == '__main__':
     import pandas as pd
 
     df = pd.DataFrame(results)
-    df.to_csv('results.csv')
+    df.to_csv('classification/results.csv')
