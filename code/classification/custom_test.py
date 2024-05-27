@@ -17,17 +17,18 @@ def setup_environment():
 setup_environment()
 
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
-from lib.utils.utils import AverageMeter, accuracy
+from lib.geoopt.manifolds.lorentz.math import dist0
 
-def getArguments():
+def get_arguments():
     """Parses command-line options."""
     parser = configargparse.ArgumentParser(description='Image classification testing', add_help=True)
-
+    
+    # Configuration file
     parser.add_argument('-c', '--config_file', required=False, default='classification/config/L-ResNet18.txt', is_config_file=True, type=str, 
                         help="Path to config file.")
+    
     # Modes
-    parser.add_argument('--mode', default="test_confidence", type=str, 
-                        choices=["test_confidence"],
+    parser.add_argument('--mode', default="test_confidence", type=str, choices=["test_confidence"],
                         help="Select the testing mode.")
     
     # Output settings
@@ -35,7 +36,7 @@ def getArguments():
                         help="Path for output files (relative to working directory).")
     
     # General settings
-    parser.add_argument('--device', default="cuda:0", type=lambda s: [str(item) for item in s.replace(' ','').split(',')],
+    parser.add_argument('--device', default="cuda:0", type=lambda s: [str(item) for item in s.replace(' ', '').split(',')],
                         help="List of devices split by comma (e.g. cuda:0,cuda:1), can also be a single device or 'cpu')")
     parser.add_argument('--dtype', default='float32', type=str, choices=["float32", "float64"], 
                         help="Set floating point precision.")
@@ -54,7 +55,7 @@ def getArguments():
     parser.add_argument('--num_layers', default=18, type=int, choices=[18, 50], 
                         help="Number of layers in ResNet.")
     parser.add_argument('--embedding_dim', default=512, type=int, 
-                        help="Dimensionality of classification embedding space (could be expanded by ResNet)")
+                        help="Dimensionality of classification embedding space (could be expanded by ResNet).")
     parser.add_argument('--encoder_manifold', default='lorentz', type=str, choices=["lorentz"], 
                         help="Select conv model encoder manifold.")
     parser.add_argument('--decoder_manifold', default='lorentz', type=str, choices=["lorentz"], 
@@ -68,7 +69,7 @@ def getArguments():
     parser.add_argument('--decoder_k', default=1.0, type=float, 
                         help="Initial curvature of hyperbolic geometry in decoder (geoopt.K=-1/K).")
     parser.add_argument('--clip_features', default=1.0, type=float, 
-                        help="Clipping parameter for hybrid HNNs proposed by Guo et al. (2022)")
+                        help="Clipping parameter for hybrid HNNs proposed by Guo et al. (2022).")
     
     # Dataset settings
     parser.add_argument('--dataset', default='CIFAR-100', type=str, choices=["MNIST", "CIFAR-10", "CIFAR-100", "Tiny-ImageNet"], 
@@ -83,32 +84,48 @@ def evaluate(model, dataloader, criterion, device):
     model.eval()
     model.to(device)
 
-    losses = AverageMeter("Loss", ":.4e")
-    acc1 = AverageMeter("Acc@1", ":6.2f")
-    acc5 = AverageMeter("Acc@5", ":6.2f")
-    predictions = []
-    probabilities = []
+    predictions, probabilities, embeddings, labels = [], [], [], []
 
     with torch.no_grad():
-        for i, (x, y) in enumerate(dataloader):
-            x = x.to(device)
-            y = y.to(device)
+        for x, y in dataloader:
+            labels.extend(y.numpy().tolist())
+
+            x, y = x.to(device), y.to(device)
 
             logits = model(x)
             probabilities_batch = F.softmax(logits, dim=1)
             _, predicted = torch.max(probabilities_batch, 1)
 
-            loss = criterion(logits, y)
-
-            top1, top5 = accuracy(logits, y, topk=(1, 5))
-            losses.update(loss.item())
-            acc1.update(top1.item(), x.shape[0])
-            acc5.update(top5.item(), x.shape[0])
-
             predictions.extend(predicted.cpu().tolist())
             probabilities.extend(probabilities_batch.cpu().tolist())
 
-    return losses.avg, acc1.avg, acc5.avg, predictions, probabilities
+            embedding = model.module.embed(x)
+            embeddings.extend(embedding.cpu().detach().numpy().tolist())
+        
+        embeddings = torch.tensor(embeddings, device=device)
+        labels = torch.tensor(labels)
+
+    return predictions, probabilities, embeddings, labels
+
+def calculate_ece(predictions, probabilities, labels, n_bins=15):
+    """Calculates the Expected Calibration Error (ECE)."""
+    bin_boundaries = np.linspace(0, 1, n_bins + 1)
+    bin_lowers, bin_uppers = bin_boundaries[:-1], bin_boundaries[1:]
+
+    ece = 0.0
+    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
+        in_bin = [(prob, pred, label) for prob, pred, label in zip(probabilities, predictions, labels) 
+                  if bin_lower < max(prob) <= bin_upper]
+        
+        if in_bin:
+            prob_in_bin = [max(prob) for prob, _, _ in in_bin]
+            accuracy_in_bin = [pred == label for _, pred, label in in_bin]
+            avg_confidence_in_bin = np.mean(prob_in_bin)
+            avg_accuracy_in_bin = np.mean(accuracy_in_bin)
+            bin_weight = len(in_bin) / len(probabilities)
+            ece += bin_weight * abs(avg_confidence_in_bin - avg_accuracy_in_bin)
+
+    return ece
 
 def main(args):
     device = args.device[0]
@@ -118,45 +135,45 @@ def main(args):
     print("Loading dataset...")
     _, _, test_loader, img_dim, num_classes = select_dataset(args, validation_split=False)
 
-    print("Creating model...")
+    print("Selecting model...")
     model = select_model(img_dim, num_classes, args)
-    
     model = model.to(device)
     model = load_model_checkpoint(model, args.load_checkpoint)
-
     model = DataParallel(model, device_ids=args.device)
     model.eval()
 
     print("Testing accuracy of model...")
     criterion = torch.nn.CrossEntropyLoss()
-    loss_test, acc1_test, acc5_test, predictions, probabilities = evaluate(model, test_loader, criterion, device)
-    print("Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(loss_test, acc1_test, acc5_test))
+    predictions, probabilities, embeddings, labels = evaluate(model, test_loader, criterion, device)
     
     results = []
-    true_labels = [target for _, target in test_loader.dataset]
-
-    for prediction, probability, true_label in zip(predictions, probabilities, true_labels):
+    for prediction, probability, label, embedding in zip(predictions, probabilities, labels, embeddings):
         result = {
             'predicted_value': prediction,
-            'probability': max(probability),
-            'real_value': true_label
+            'confidence': max(probability),
+            'real_value': label.item(),
+            'hyper_radius': dist0(embedding, k=torch.tensor(1.0)).detach().cpu().item()
         }
         results.append(result)
+    
+    ece_score = calculate_ece(predictions, probabilities, labels)
 
     print("Finished!")
-
-    return results
+    return results, ece_score
 
 if __name__ == '__main__':
-    args = getArguments()
+    args = get_arguments()
 
     torch.set_default_dtype(torch.float32)
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    results = main(args)
+    results, ece_score = main(args)
 
-    # for result in results:
-    #     print("Predicted Value: {}, Probability: {:.4f}, Real Value: {}".format(
-    #        result['predicted_value'], result['probability'], result['real_value']))
+    print(f"ECE Score: {ece_score}")
+
+    import pandas as pd
+
+    df = pd.DataFrame(results)
+    df.to_csv('results.csv')
