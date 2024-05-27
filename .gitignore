@@ -5,7 +5,7 @@
 
 *data/
 # *output/
-*.pth
+.pth
 *.idea/
 *.idea/misc.xml
 *.pyc
