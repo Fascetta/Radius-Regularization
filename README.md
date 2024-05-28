@@ -8,7 +8,7 @@ The aim of this thesis study is to investigate the calibration properties of hyp
 
 ## Investigation
 1. Replication of Results
-We will replicate the results from the Hybrid Poincaré model described in the provided repository, specifically focusing on the Hybrid Poincaré model.
+We will replicate the results from the experiment described in the provided repository, specifically focusing on the **Fully Hyperbolic Convolutional Neural Network** based on the **Lorentz model**.
 https://github.com/kschwethelm/HyperbolicCV
 
 2. Calibration Property and Correlation Analysis
