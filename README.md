@@ -14,9 +14,9 @@ https://github.com/kschwethelm/HyperbolicCV
 2. Calibration Property and Correlation Analysis
 Once the replication is completed, we will proceed to investigate the calibration properties of the network. This will involve:
 
-* Computing the Expected Calibration Error (ECE) score.
+* Computing the Expected Calibration Error (ECE) scores.
 https://openreview.net/pdf?id=QRBvLayFXI
-* Correlating the confidence with the hyperbolic radius.
+* Correlating the ECE scores with the hyperbolic radius.
 
 ## Additional Resources
 For further understanding of the hyperbolic radius and its implications, please refer to the provided paper.
