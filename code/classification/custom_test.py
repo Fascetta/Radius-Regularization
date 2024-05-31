@@ -114,7 +114,7 @@ def main(args):
     torch.cuda.empty_cache()
 
     print("Loading dataset...")
-    _, _, test_loader, img_dim, num_classes = select_dataset(args, validation_split=False)
+    _, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
 
     print("Selecting model...")
     model = select_model(img_dim, num_classes, args)

@@ -254,4 +254,4 @@ def select_dataset(args, validation_split=False):
     else:
         val_loader = test_loader
         
-    return train_loader, test_loader, val_loader, img_dim, num_classes
+    return train_loader, val_loader, test_loader, img_dim, num_classes
