@@ -10,6 +10,7 @@
 *.idea/misc.xml
 *.pyc
 *.tar
+*.png
 
 *.m
 *.gz

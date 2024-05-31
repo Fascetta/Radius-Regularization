@@ -17,14 +17,15 @@ def setup_environment():
 setup_environment()
 
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
-from lib.geoopt.manifolds.lorentz.math import dist0
+from lib.geoopt.manifolds.lorentz.math import dist0 as dist0_lorentz
+from lib.geoopt.manifolds.stereographic.math import dist0 as dist0_poincare
 
 def get_arguments():
     """Parses command-line options."""
     parser = configargparse.ArgumentParser(description='Image classification testing', add_help=True)
     
     # Configuration file
-    parser.add_argument('-c', '--config_file', required=False, default='classification/config/L-ResNet18.txt', is_config_file=True, type=str, 
+    parser.add_argument('-c', '--config_file', required=False, default=None, is_config_file=True, type=str, 
                         help="Path to config file.")
     
     # Modes
@@ -56,9 +57,9 @@ def get_arguments():
                         help="Number of layers in ResNet.")
     parser.add_argument('--embedding_dim', default=512, type=int, 
                         help="Dimensionality of classification embedding space (could be expanded by ResNet).")
-    parser.add_argument('--encoder_manifold', default='lorentz', type=str, choices=["lorentz"], 
+    parser.add_argument('--encoder_manifold', default='lorentz', type=str, choices=["lorentz", "euclidean"], 
                         help="Select conv model encoder manifold.")
-    parser.add_argument('--decoder_manifold', default='lorentz', type=str, choices=["lorentz"], 
+    parser.add_argument('--decoder_manifold', default='lorentz', type=str, choices=["lorentz", "poincare"], 
                         help="Select conv model decoder manifold.")
     
     # Hyperbolic geometry settings
@@ -79,7 +80,7 @@ def get_arguments():
 
     return args
 
-def evaluate(model, dataloader, criterion, device):
+def evaluate(model, dataloader, device):
     """Evaluates model performance."""
     model.eval()
     model.to(device)
@@ -107,26 +108,6 @@ def evaluate(model, dataloader, criterion, device):
 
     return predictions, probabilities, embeddings, labels
 
-def calculate_ece(predictions, probabilities, labels, n_bins=15):
-    """Calculates the Expected Calibration Error (ECE)."""
-    bin_boundaries = np.linspace(0, 1, n_bins + 1)
-    bin_lowers, bin_uppers = bin_boundaries[:-1], bin_boundaries[1:]
-
-    ece = 0.0
-    for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-        in_bin = [(prob, pred, label) for prob, pred, label in zip(probabilities, predictions, labels) 
-                  if bin_lower < max(prob) <= bin_upper]
-        
-        if in_bin:
-            prob_in_bin = [max(prob) for prob, _, _ in in_bin]
-            accuracy_in_bin = [pred == label for _, pred, label in in_bin]
-            avg_confidence_in_bin = np.mean(prob_in_bin)
-            avg_accuracy_in_bin = np.mean(accuracy_in_bin)
-            bin_weight = len(in_bin) / len(probabilities)
-            ece += bin_weight * abs(avg_confidence_in_bin - avg_accuracy_in_bin)
-
-    return ece
-
 def main(args):
     device = args.device[0]
     torch.cuda.set_device(device)
@@ -143,23 +124,24 @@ def main(args):
     model.eval()
 
     print("Testing accuracy of model...")
-    criterion = torch.nn.CrossEntropyLoss()
-    predictions, probabilities, embeddings, labels = evaluate(model, test_loader, criterion, device)
-    
+    predictions, probabilities, embeddings, labels = evaluate(model, test_loader, device)
+
+    dist0 = dist0_lorentz if args.decoder_manifold == 'lorentz' else dist0_poincare
+
     results = []
+
     for prediction, probability, label, embedding in zip(predictions, probabilities, labels, embeddings):
+
         result = {
-            'predicted_value': prediction,
-            'confidence': max(probability),
-            'real_value': label.item(),
-            'hyper_radius': dist0(embedding, k=torch.tensor(1.0)).detach().cpu().item()
+            'prediction': prediction,                                                       # Predicted Value
+            'confidence': max(probability),                                                 # Probability of the predicted Value
+            'label': label.item(),                                                          # True Value of the instance
+            'hyper_radius': dist0(embedding, k=torch.tensor(1.0)).detach().cpu().item()     # Hyperbolic radius of the embedding
         }
         results.append(result)
-    
-    ece_score = calculate_ece(predictions, probabilities, labels)
 
     print("Finished!")
-    return results, ece_score
+    return results
 
 if __name__ == '__main__':
     args = get_arguments()
@@ -169,11 +151,13 @@ if __name__ == '__main__':
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    results, ece_score = main(args)
+    results = main(args)
 
-    print(f"ECE Score: {ece_score}")
-
+    # Save the results
     import pandas as pd
 
     df = pd.DataFrame(results)
-    df.to_csv('classification/results.csv')
+    df['norm_radius'] = (df['hyper_radius'] - df['hyper_radius'].min()) / (df['hyper_radius'].max() - df['hyper_radius'].min())
+
+    output_path = os.path.join(args.output_dir, 'results.csv') if args.output_dir else 'classification/results.csv'
+    df.to_csv(output_path, index=False)

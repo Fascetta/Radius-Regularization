@@ -2,13 +2,13 @@
 
 # Output settings
 exp_name = EP-ResNet18
-#output_dir = classification/output
+output_dir = classification/output/EP
 
 # General settings
 device = cuda:0
 dtype = float32
 seed = 1
-#load_checkpoint = classification/output/EP-ResNet18.pth
+load_checkpoint = classification/output/EP/best_EP-ResNet18.pth
 
 # General training hyperparameters
 num_epochs = 200
