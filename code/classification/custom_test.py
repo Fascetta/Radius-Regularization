@@ -157,7 +157,8 @@ if __name__ == '__main__':
     import pandas as pd
 
     df = pd.DataFrame(results)
-    df['norm_radius'] = (df['hyper_radius'] - df['hyper_radius'].min()) / (df['hyper_radius'].max() - df['hyper_radius'].min())
+    df['norm_radius'] = (                                                                   # Normalized Hyperbolic radius
+        df['hyper_radius'] - df['hyper_radius'].min()) / (df['hyper_radius'].max() - df['hyper_radius'].min()) 
 
     output_path = os.path.join(args.output_dir, 'results.csv') if args.output_dir else 'classification/results.csv'
     df.to_csv(output_path, index=False)
