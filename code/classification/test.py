@@ -35,14 +35,13 @@ def getArguments():
                         help="Path to config file.")
     
     # Modes
-    parser.add_argument('--mode', default="test_accuracy", type=str, 
-                        choices=[
-                            "test_accuracy",
-                            "visualize_embeddings",
-                            "fgsm",
-                            "pgd"
-                        ],
-                        help = "Select the testing mode.")
+    parser.add_argument(
+        "--mode",
+        default="test_accuracy",
+        type=str,
+        choices=["test_accuracy", "visualize_embeddings", "fgsm", "pgd", "calibrate"],
+        help="Select the testing mode.",
+    )
     
     # Output settings
     parser.add_argument('--output_dir', default=None, type=str, 
@@ -129,6 +128,39 @@ def main(args):
         loss_test, acc1_test, acc5_test = evaluate(model, test_loader, criterion, device)
         print("Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
             loss_test, acc1_test, acc5_test))
+        
+    elif args.mode == "calibrate":
+        print("Testing accuracy of model without calibration...")
+        criterion = torch.nn.CrossEntropyLoss()
+        loss_test, acc1_test, acc5_test = evaluate(
+            model,
+            test_loader,
+            criterion,
+            device,
+            calibration_metrics=True,
+            num_classes=num_classes,
+        )
+        print(
+            "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                loss_test, acc1_test, acc5_test
+            )
+        )
+
+        print("\nTesting accuracy of model with calibration...")
+        loss_test, acc1_test, acc5_test = evaluate(
+            model,
+            test_loader,
+            criterion,
+            device,
+            calibration_metrics=True,
+            num_classes=num_classes,
+            calibrate=True,
+        )
+        print(
+            "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                loss_test, acc1_test, acc5_test
+            )
+        )
         
     elif args.mode=="visualize_embeddings":
         print("Visualizing embedding space of model...")

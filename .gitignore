@@ -15,3 +15,5 @@
 *.m
 *.gz
 *.html
+
+code/classification/output/

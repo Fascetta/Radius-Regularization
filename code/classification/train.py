@@ -21,6 +21,8 @@ import numpy as np
 
 from utils.initialize import select_dataset, select_model, select_optimizer, load_checkpoint
 from lib.utils.utils import AverageMeter, accuracy
+from utils.calibration_metrics import CalibrationMetrics
+from torchmetrics.classification import MulticlassCalibrationError
 
 
 def getArguments():
@@ -240,8 +242,16 @@ def main(args):
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, criterion, device):
-    """ Evaluates model performance """
+def evaluate(
+    model,
+    dataloader,
+    criterion,
+    device,
+    calibration_metrics=False,
+    num_classes=10,
+    calibrate=False,
+):
+    """Evaluates model performance"""
     model.eval()
     model.to(device)
 
@@ -249,11 +259,25 @@ def evaluate(model, dataloader, criterion, device):
     acc1 = AverageMeter("Acc@1", ":6.2f")
     acc5 = AverageMeter("Acc@5", ":6.2f")
 
+    tau = 0.7
+
+    norms = []
+
+    if calibration_metrics:
+        n_classes = 10
+        cm = CalibrationMetrics(n_classes=n_classes)
+
     for i, (x, y) in enumerate(dataloader):
         x = x.to(device)
         y = y.to(device)
 
-        logits = model(x)
+        embeds = model.module.embed(x)
+        logits = model.module.decoder(embeds)
+
+        norms.append(torch.norm(embeds, dim=-1, p=2).cpu().numpy())
+
+        if calibrate:
+            logits = torch.nn.functional.softmax(logits / tau, dim=-1)
 
         loss = criterion(logits, y)
 
@@ -262,7 +286,21 @@ def evaluate(model, dataloader, criterion, device):
         acc1.update(top1.item(), x.shape[0])
         acc5.update(top5.item(), x.shape[0])
 
-    return losses.avg, acc1.avg, acc5.avg 
+        if calibration_metrics:
+            cm.update(logits, y)
+
+    if calibration_metrics:
+        calib_metrics = cm.compute()
+        print("\n===== Calibration metrics ===== \n")
+        for k, v in calib_metrics.items():
+            print(f"{k.upper()}: {round(v, 4)}")
+        print("\n=============================== \n")
+
+    norms = np.concatenate(norms)
+    avg_norm = np.mean(norms)
+    print(f"Average norm: {avg_norm}")
+
+    return losses.avg, acc1.avg, acc5.avg
 
 
 # ----------------------------------
