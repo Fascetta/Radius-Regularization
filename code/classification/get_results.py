@@ -80,7 +80,7 @@ def get_arguments():
 
     return args
 
-def evaluate(model, dataloader, device):
+def get_results(model, dataloader, device):
     """Evaluates model performance."""
     model.eval()
     model.to(device)
@@ -106,26 +106,6 @@ def evaluate(model, dataloader, device):
         embeddings = torch.tensor(embeddings, device=device)
         labels = torch.tensor(labels)
 
-    return predictions, probabilities, embeddings, labels
-
-def main(args):
-    device = args.device[0]
-    torch.cuda.set_device(device)
-    torch.cuda.empty_cache()
-
-    print("Loading dataset...")
-    _, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
-
-    print("Selecting model...")
-    model = select_model(img_dim, num_classes, args)
-    model = model.to(device)
-    model = load_model_checkpoint(model, args.load_checkpoint)
-    model = DataParallel(model, device_ids=args.device)
-    model.eval()
-
-    print("Testing accuracy of model...")
-    predictions, probabilities, embeddings, labels = evaluate(model, test_loader, device)
-
     dist0 = dist0_lorentz if args.decoder_manifold == 'lorentz' else dist0_poincare
 
     results = []
@@ -141,6 +121,26 @@ def main(args):
         results.append(result)
 
     print("Finished!")
+    return results
+
+def main(args):
+    device = args.device[0]
+    torch.cuda.set_device(device)
+    torch.cuda.empty_cache()
+
+    print("Loading dataset...")
+    _, _, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
+
+    print("Selecting model...")
+    model = select_model(img_dim, num_classes, args)
+    model = model.to(device)
+    model = load_model_checkpoint(model, args.load_checkpoint)
+    model = DataParallel(model, device_ids=args.device)
+    model.eval()
+
+    print("Extracting informations about model...")
+    results = get_results(model, test_loader, device)
+
     return results
 
 if __name__ == '__main__':
