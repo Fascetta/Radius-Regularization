@@ -23,6 +23,7 @@ from utils.initialize import select_dataset, select_model, select_optimizer, loa
 from lib.utils.utils import AverageMeter, accuracy
 from utils.calibration_metrics import CalibrationMetrics
 from torchmetrics.classification import MulticlassCalibrationError
+from scipy.optimize import minimize
 
 
 def getArguments():
@@ -103,6 +104,21 @@ def getArguments():
 
     return args
 
+
+def get_tau(logits, labels, criterion):
+
+    def scaled_cross_entropy_loss(logits, labels, tau):
+        scaled_logits = logits / tau
+        loss = criterion(scaled_logits, labels)
+        return loss.item()
+
+    initial_tau = 1.0
+
+    res = minimize(lambda tau: scaled_cross_entropy_loss(logits, labels, tau), initial_tau, method='L-BFGS-B', bounds=[(0.05, 3.0)])
+
+    optimal_tau = res.x[0]
+
+    return optimal_tau
 
 def main(args):
     device = args.device[0]
@@ -248,8 +264,7 @@ def evaluate(
     criterion,
     device,
     calibration_metrics=False,
-    num_classes=10,
-    calibrate=False,
+    tau=None,
 ):
     """Evaluates model performance"""
     model.eval()
@@ -259,13 +274,11 @@ def evaluate(
     acc1 = AverageMeter("Acc@1", ":6.2f")
     acc5 = AverageMeter("Acc@5", ":6.2f")
 
-    tau = 0.7
 
     norms = []
 
     if calibration_metrics:
-        n_classes = 10
-        cm = CalibrationMetrics(n_classes=n_classes)
+        cm = CalibrationMetrics(n_classes = 100)
 
     for i, (x, y) in enumerate(dataloader):
         x = x.to(device)
@@ -276,7 +289,7 @@ def evaluate(
 
         norms.append(torch.norm(embeds, dim=-1, p=2).cpu().numpy())
 
-        if calibrate:
+        if tau:
             logits = torch.nn.functional.softmax(logits / tau, dim=-1)
 
         loss = criterion(logits, y)

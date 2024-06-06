@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
 from lib.utils.visualize import visualize_embeddings
-from train import evaluate
+from train import evaluate, get_tau
 
 from lib.utils.utils import AverageMeter, accuracy
 
@@ -103,7 +103,7 @@ def main(args):
     print(args)
 
     print("Loading dataset...")
-    train_loader, _, test_loader, img_dim, num_classes = select_dataset(args, validation_split=False)
+    train_loader, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=False)
 
     print("Creating model...")
     model = select_model(img_dim, num_classes, args)
@@ -138,13 +138,33 @@ def main(args):
             criterion,
             device,
             calibration_metrics=True,
-            num_classes=num_classes,
         )
         print(
             "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
                 loss_test, acc1_test, acc5_test
             )
         )
+
+        print("Finding optimal tau for temperature scaling...")
+        logits_list = []
+        labels_list = []
+
+        for i, (x, y) in enumerate(val_loader):
+            x = x.to(device)
+            y = y.to(device)
+
+            with torch.no_grad():
+                embeds = model.module.embed(x)
+                logits = model.module.decoder(embeds)
+
+            logits_list.append(logits.cpu())
+            labels_list.append(y.cpu())
+
+        logits = torch.cat(logits_list)
+        labels = torch.cat(labels_list)
+
+        tau = get_tau(logits, labels, criterion)
+        print(f"Optimal tau: {tau}")
 
         print("\nTesting accuracy of model with calibration...")
         loss_test, acc1_test, acc5_test = evaluate(
@@ -153,8 +173,7 @@ def main(args):
             criterion,
             device,
             calibration_metrics=True,
-            num_classes=num_classes,
-            calibrate=True,
+            tau=tau,
         )
         print(
             "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
