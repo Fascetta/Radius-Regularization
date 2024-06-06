@@ -8,7 +8,7 @@ output_dir = classification/output/L
 device = cuda:0
 dtype = float32
 seed = 1
-load_checkpoint = classification/output/L/best_L-ResNet18.pth
+load_checkpoint = classification/output/L/best_L-ResNet18-Val.pth
 
 # General training hyperparameters
 num_epochs = 200

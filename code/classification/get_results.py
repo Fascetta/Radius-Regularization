@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn import DataParallel
 import configargparse
+import pandas as pd
 
 def setup_environment():
     """Setup working directory and library paths."""
@@ -19,6 +20,7 @@ setup_environment()
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
 from lib.geoopt.manifolds.lorentz.math import dist0 as dist0_lorentz
 from lib.geoopt.manifolds.stereographic.math import dist0 as dist0_poincare
+from train import get_tau
 
 def get_arguments():
     """Parses command-line options."""
@@ -80,43 +82,59 @@ def get_arguments():
 
     return args
 
-def get_results(model, dataloader, device):
+def get_results(model, val_loader, test_loader, device):
     """Evaluates model performance."""
     model.eval()
     model.to(device)
 
+    print("Finding optimal tau for temperature scaling...")
+    logits_list, labels_list = [], []
+
+    # Collect logits and labels from validation loader
+    for x, y in val_loader:
+        x, y = x.to(device), y.to(device)
+        with torch.no_grad():
+            embeds = model.module.embed(x)
+            logits = model.module.decoder(embeds)
+        logits_list.append(logits.cpu())
+        labels_list.append(y.cpu())
+
+    logits = torch.cat(logits_list)
+    labels = torch.cat(labels_list)
+    tau = get_tau(logits, labels, criterion=torch.nn.CrossEntropyLoss())
+
     predictions, probabilities, embeddings, labels = [], [], [], []
 
+    # Collect predictions, probabilities, embeddings and labels from test loader
     with torch.no_grad():
-        for x, y in dataloader:
-            labels.extend(y.numpy().tolist())
-
+        for x, y in test_loader:
             x, y = x.to(device), y.to(device)
-
             logits = model(x)
-            probabilities_batch = F.softmax(logits, dim=1)
+            probabilities_batch = F.softmax(logits / tau, dim=1)
             _, predicted = torch.max(probabilities_batch, 1)
 
             predictions.extend(predicted.cpu().tolist())
             probabilities.extend(probabilities_batch.cpu().tolist())
+            labels.extend(y.cpu().tolist())
 
             embedding = model.module.embed(x)
-            embeddings.extend(embedding.cpu().detach().numpy().tolist())
-        
-        embeddings = torch.tensor(embeddings, device=device)
-        labels = torch.tensor(labels)
+            embeddings.extend(embedding.cpu().numpy().tolist())
 
+    # Convert embeddings and labels to tensors
+    embeddings = torch.tensor(embeddings, device=device)
+    labels = torch.tensor(labels)
+
+    # Determine the distance function based on decoder manifold
     dist0 = dist0_lorentz if args.decoder_manifold == 'lorentz' else dist0_poincare
 
+    # Collect results
     results = []
-
     for prediction, probability, label, embedding in zip(predictions, probabilities, labels, embeddings):
-
         result = {
-            'prediction': prediction,                                                       # Predicted Value
-            'confidence': max(probability),                                                 # Probability of the predicted Value
-            'label': label.item(),                                                          # True Value of the instance
-            'hyper_radius': dist0(embedding, k=torch.tensor(1.0)).detach().cpu().item()     # Hyperbolic radius of the embedding
+            'prediction': prediction,
+            'confidence': max(probability),
+            'label': label.item(),
+            'hyper_radius': dist0(embedding, k=torch.tensor(1.0)).detach().cpu().item()
         }
         results.append(result)
 
@@ -129,7 +147,7 @@ def main(args):
     torch.cuda.empty_cache()
 
     print("Loading dataset...")
-    _, _, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
+    _, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
 
     print("Selecting model...")
     model = select_model(img_dim, num_classes, args)
@@ -139,7 +157,7 @@ def main(args):
     model.eval()
 
     print("Extracting informations about model...")
-    results = get_results(model, test_loader, device)
+    results = get_results(model, val_loader, test_loader, device)
 
     return results
 
