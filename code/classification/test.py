@@ -23,7 +23,7 @@ from tqdm import tqdm
 
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
 from lib.utils.visualize import visualize_embeddings
-from train import evaluate, get_tau
+from train import evaluate, get_radius_tau
 
 from lib.utils.utils import AverageMeter, accuracy
 
@@ -145,25 +145,8 @@ def main(args):
             )
         )
 
-        print("Finding optimal tau for temperature scaling...")
-        logits_list = []
-        labels_list = []
-
-        for i, (x, y) in enumerate(val_loader):
-            x = x.to(device)
-            y = y.to(device)
-
-            with torch.no_grad():
-                embeds = model.module.embed(x)
-                logits = model.module.decoder(embeds)
-
-            logits_list.append(logits.cpu())
-            labels_list.append(y.cpu())
-
-        logits = torch.cat(logits_list)
-        labels = torch.cat(labels_list)
-
-        tau = get_tau(logits, labels, criterion)
+        print("Finding optimal tau for temperature scaling on radius...")
+        tau = get_radius_tau(model, val_loader, criterion, device)
         print(f"Optimal tau: {tau}")
 
         print("\nTesting accuracy of model with calibration...")

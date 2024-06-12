@@ -20,7 +20,7 @@ setup_environment()
 from utils.initialize import select_dataset, select_model, load_model_checkpoint
 from lib.geoopt.manifolds.lorentz.math import dist0 as dist0_lorentz
 from lib.geoopt.manifolds.stereographic.math import dist0 as dist0_poincare
-from train import get_tau
+from train import get_radius_tau, get_confidence_tau
 
 def get_arguments():
     """Parses command-line options."""
@@ -82,26 +82,34 @@ def get_arguments():
 
     return args
 
-def get_results(model, val_loader, test_loader, device):
+def get_results(model, val_loader, test_loader, device, temp_confidence = False, temp_radius = False):
     """Evaluates model performance."""
     model.eval()
     model.to(device)
 
-    print("Finding optimal tau for temperature scaling...")
-    logits_list, labels_list = [], []
 
-    # Collect logits and labels from validation loader
-    for x, y in val_loader:
-        x, y = x.to(device), y.to(device)
-        with torch.no_grad():
-            embeds = model.module.embed(x)
-            logits = model.module.decoder(embeds)
-        logits_list.append(logits.cpu())
-        labels_list.append(y.cpu())
+    if temp_confidence:
+        print("Finding optimal tau for temperature scaling on confidence...")
+        logits_list, labels_list = [], []
+        for x, y in val_loader:
+            x, y = x.to(device), y.to(device)
+            with torch.no_grad():
+                embeds = model.module.embed(x)
+                logits = model.module.decoder(embeds)
+            logits_list.append(logits.cpu())
+            labels_list.append(y.cpu())
 
-    logits = torch.cat(logits_list)
-    labels = torch.cat(labels_list)
-    tau = get_tau(logits, labels, criterion=torch.nn.CrossEntropyLoss())
+        logits = torch.cat(logits_list)
+        labels = torch.cat(labels_list)
+        confidence_tau = get_confidence_tau(logits, labels, criterion=torch.nn.CrossEntropyLoss())
+    else:
+        confidence_tau = 1
+        
+    if temp_radius:
+        print("Finding optimal tau for temperature scaling on radius...")
+        radius_tau = get_radius_tau(model, val_loader, criterion=torch.nn.CrossEntropyLoss(), device=device)
+    else:
+        radius_tau = 1
 
     predictions, probabilities, embeddings, labels = [], [], [], []
 
@@ -110,7 +118,7 @@ def get_results(model, val_loader, test_loader, device):
         for x, y in test_loader:
             x, y = x.to(device), y.to(device)
             logits = model(x)
-            probabilities_batch = F.softmax(logits / tau, dim=1)
+            probabilities_batch = F.softmax(logits / confidence_tau, dim=1)
             _, predicted = torch.max(probabilities_batch, 1)
 
             predictions.extend(predicted.cpu().tolist())
@@ -129,7 +137,7 @@ def get_results(model, val_loader, test_loader, device):
 
     # Collect results
     results = []
-    for prediction, probability, label, embedding in zip(predictions, probabilities, labels, embeddings):
+    for prediction, probability, label, embedding in zip(predictions, probabilities, labels, embeddings / radius_tau):
         result = {
             'prediction': prediction,
             'confidence': max(probability),
@@ -157,7 +165,7 @@ def main(args):
     model.eval()
 
     print("Extracting informations about model...")
-    results = get_results(model, val_loader, test_loader, device)
+    results = get_results(model, val_loader, test_loader, device, temp_radius=True)
 
     return results
 
