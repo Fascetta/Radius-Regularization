@@ -19,9 +19,9 @@ from tqdm import tqdm
 import random
 import numpy as np
 
-from utils.initialize import select_dataset, select_model, select_optimizer, load_checkpoint
+from classification.utils.initialize import select_dataset, select_model, select_optimizer, load_checkpoint
 from lib.utils.utils import AverageMeter, accuracy
-from utils.calibration_metrics import CalibrationMetrics
+from classification.utils.calibration_metrics import CalibrationMetrics
 from torchmetrics.classification import MulticlassCalibrationError
 from scipy.optimize import minimize
 
@@ -94,6 +94,8 @@ def getArguments():
                         help="Initial curvature of hyperbolic geometry in decoder (geoopt.K=-1/K).")
     parser.add_argument('--clip_features', default=1.0, type=float,
                         help="Clipping parameter for hybrid HNNs proposed by Guo et al. (2022)")
+    parser.add_argument('--radius_loss', default=0.0, type=float,
+                        help="Use radius focal loss together with cross-entropy loss.")
 
     # Dataset settings
     parser.add_argument('--dataset', default='CIFAR-100', type=str,
@@ -150,6 +152,32 @@ def get_confidence_tau(logits, labels, criterion):
 
     return optimal_tau
 
+
+def compute_estimated_confidence(logits, labels):
+    """Computes the estimated confidence for each class."""
+    n_classes = logits.shape[-1]
+    confidence = torch.zeros(n_classes, device=logits.device)
+    preds = logits.argmax(dim=-1)
+
+    # compute total counts and correct counts for each class
+    total_counts = torch.bincount(labels, minlength=n_classes).float()
+    correct = (preds == labels).float()
+    correct_counts = torch.zeros(n_classes, device=logits.device)
+    correct_counts.index_add_(0, labels, correct.float())
+
+    # compute confidence for each class
+    confidence = correct_counts / total_counts
+    confidence[total_counts == 0] = 0.0
+    return confidence
+
+
+def radius_confidence_loss(logits, labels, radii):
+    confidence = compute_estimated_confidence(logits, labels)
+    true_class_confidence = confidence[labels]
+    loss = torch.nn.functional.mse_loss(radii, true_class_confidence)
+    return loss
+
+
 def main(args):
     device = args.device[0]
     # torch.cuda.set_device(device)     deprecated
@@ -175,6 +203,13 @@ def main(args):
     optimizer, lr_scheduler = select_optimizer(model, args)
     criterion = torch.nn.CrossEntropyLoss()
 
+    use_radius_loss = args.radius_loss > 0.0
+    if use_radius_loss:
+        print(f"Using radius loss with alpha={args.radius_loss}")
+        alpha = args.radius_loss
+        # radius_loss = lambda x: torch.mean(x ** 2) * alpha
+        radius_loss = radius_confidence_loss
+
     start_epoch = 0
     if args.load_checkpoint is not None:
         print("Loading model checkpoint from {}".format(args.load_checkpoint))
@@ -195,6 +230,7 @@ def main(args):
         model.train()
 
         losses = AverageMeter("Loss", ":.4e")
+        radius_losses = AverageMeter("RadiusLoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
 
@@ -203,8 +239,16 @@ def main(args):
             x = x.to(device)
             y = y.to(device)
 
-            logits = model(x)
-            loss = criterion(logits, y) # Compute loss
+            if use_radius_loss:
+                embeds = model.module.embed(x)
+                logits = model.module.decoder(embeds)
+                radii = torch.norm(embeds, dim=-1, p=2)
+                rl = radius_loss(logits, y, radii)
+                ce_loss = criterion(logits, y)
+                loss = ce_loss + rl * alpha
+            else:
+                logits = model(x)
+                loss = criterion(logits, y) # Compute loss
 
             optimizer.zero_grad() # Reset gradients tensoes
             loss.backward() # Back-Propagation
@@ -214,6 +258,8 @@ def main(args):
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
                 losses.update(loss.item())
+                if use_radius_loss:
+                    radius_losses.update(rl.item())
                 acc1.update(top1.item())
                 acc5.update(top5.item())
 
@@ -231,9 +277,14 @@ def main(args):
 
             loss_val, acc1_val, acc5_val = evaluate(model, val_loader, criterion, device)
 
-            print(
-                "Epoch {}/{}: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
-                    epoch + 1, args.num_epochs, losses.avg, acc1.avg, acc5.avg, loss_val, acc1_val, acc5_val))
+            if use_radius_loss:
+                print(
+                    "Epoch {}/{}: Loss={:.4f}, RadiusLoss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                        epoch + 1, args.num_epochs, losses.avg, radius_losses.avg, acc1.avg, acc5.avg, loss_val, acc1_val, acc5_val))
+            else:
+                print(
+                    "Epoch {}/{}: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                        epoch + 1, args.num_epochs, losses.avg, acc1.avg, acc5.avg, loss_val, acc1_val, acc5_val))
 
             # Testing for best model
             if acc1_val > best_acc:
