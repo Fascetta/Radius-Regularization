@@ -6,7 +6,7 @@ from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
 from torch.optim.lr_scheduler import MultiStepLR
 
-from models.classifier import ResNetClassifier
+from classification.models.classifier import ResNetClassifier
 
 
 def load_checkpoint(model, optimizer, lr_scheduler, args):

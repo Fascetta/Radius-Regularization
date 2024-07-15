@@ -74,6 +74,8 @@ def getArguments():
     # General validation/testing hyperparameters
     parser.add_argument('--batch_size_test', default=128, type=int,
                         help="Validation/Testing batch size.")
+    parser.add_argument('--validation_split', action='store_true',
+                        help="Use validation split of training data.")
 
     # Model selection
     parser.add_argument('--num_layers', default=18, type=int, choices=[18, 50],
@@ -188,8 +190,8 @@ def main(args):
     print("Arguments:")
     print(args)
 
-    print("Loading dataset...")
-    train_loader, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=True)
+    print(f"Loading dataset with validation_split = {args.validation_split}...")
+    train_loader, val_loader, test_loader, img_dim, num_classes = select_dataset(args, validation_split=args.validation_split)
 
     print("Creating model...")
     model = select_model(img_dim, num_classes, args)

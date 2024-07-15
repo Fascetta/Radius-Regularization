@@ -1,14 +1,16 @@
 # CUDA_VISIBLE_DEVICES=1 python code/classification/train.py -c classification/config/L-ResNet18.txt
 
 # Output settings
-exp_name = L-ResNet18-RadiusLoss-mse
+exp_name = L-ResNet18-RadiusLoss-mse-no-val
 output_dir = classification/output/cifar-100
 
 # General settings
 device = cuda:0
 dtype = float32
 seed = 1
-# load_checkpoint = classification/output/cifar-100/best_L-ResNet18-RadiusLoss-mse.pth
+
+# Test
+# load_checkpoint = classification/output/cifar-100/final_L-ResNet18-RadiusLoss-mse-200.pth
 # mode = calibrate
 
 # General training hyperparameters
@@ -24,6 +26,7 @@ radius_loss = 1e-1
 
 # General validation/testing hyperparameters
 batch_size_test = 128
+validation_split = False
 
 # Model selection
 num_layers = 18
