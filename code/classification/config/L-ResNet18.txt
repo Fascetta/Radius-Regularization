@@ -10,7 +10,7 @@ dtype = float32
 seed = 1
 
 # Test
-# load_checkpoint = classification/output/cifar-100/final_L-ResNet18-RadiusLoss-mse-200.pth
+# load_checkpoint = classification/output/cifar-100/best_L-ResNet18-RadiusLoss-mse-no-val.pth
 # mode = calibrate
 
 # General training hyperparameters

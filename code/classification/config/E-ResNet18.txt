@@ -2,13 +2,13 @@
 
 # Output settings
 exp_name = E-ResNet18
-#output_dir = classification/output
+# output_dir = classification/output/cifar-100
 
 # General settings
 device = cuda:0
 dtype = float32
 seed = 1
-#load_checkpoint = classification/output/E-ResNet18.pth
+# load_checkpoint = classification/output/cifar-100/best_E-ResNet18.pth
 
 # General training hyperparameters
 num_epochs = 200
@@ -30,4 +30,4 @@ encoder_manifold = euclidean
 decoder_manifold = euclidean
 
 # Dataset settings
-dataset = CIFAR-100 # CIFAR-10 or Tiny-ImageNet
+dataset = CIFAR-100  # CIFAR-10 or CIFAR-100 or Tiny-ImageNet

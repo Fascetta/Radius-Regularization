@@ -1,0 +1,1 @@
+python code/classification/test.py -c classification/config/L-ResNet18.txt
