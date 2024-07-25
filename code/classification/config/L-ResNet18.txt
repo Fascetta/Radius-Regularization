@@ -1,7 +1,7 @@
 # CUDA_VISIBLE_DEVICES=1 python code/classification/train.py -c classification/config/L-ResNet18.txt
 
 # Output settings
-exp_name = L-ResNet18-RadiusLoss-mse-no-val
+exp_name = L-ResNet18-WeightedRadiusLoss
 output_dir = classification/output/cifar-100
 
 # General settings
