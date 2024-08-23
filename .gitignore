@@ -17,3 +17,4 @@
 *.html
 
 code/classification/output/
+wandb/
