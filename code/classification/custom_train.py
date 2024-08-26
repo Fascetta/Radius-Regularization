@@ -286,8 +286,8 @@ def main(args):
     wandb.init(
         entity="pinlab-sapienza",
         project="CPHNN",
-        group="cifar-100",
-        name="weightedRadiusLoss",
+        group=args.dataset,
+        name=args.exp_name,
     )
     device = args.device[0]
     torch.cuda.empty_cache()
@@ -322,6 +322,7 @@ def main(args):
     best_epoch = 0
     ece_meter = ECEMeter()
     manifold_curvature = torch.tensor(1.0)
+    rl_alpha = args.radius_loss
 
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
@@ -345,7 +346,7 @@ def main(args):
             mean_weighted_rl = torch.mean(weighted_rl)
 
             base_loss = criterion(logits, y)  # Compute loss
-            loss = base_loss + mean_weighted_rl
+            loss = base_loss + mean_weighted_rl * rl_alpha
 
             optimizer.zero_grad()  # Reset gradients
             loss.backward()  # Back-Propagation
@@ -364,17 +365,6 @@ def main(args):
             global_step += 1
 
         ece_score = ece_meter.compute()
-
-        wandb.log(
-            {
-                "epoch": epoch,
-                "loss": losses.avg,
-                "acc1": acc1.avg,
-                "acc5": acc5.avg,
-                "ece": ece_score,
-                "misclassified_moving_avg": misclassified_moving_average[-1],
-            }
-        )
         # ------- End iteration -------
 
         # ------- Start validation and logging -------
@@ -404,6 +394,20 @@ def main(args):
                     acc5_val,
                 )
             )
+
+            wandb.log(
+            {
+                "epoch": epoch,
+                "train/loss": losses.avg,
+                "train/acc1": acc1.avg,
+                "train/acc5": acc5.avg,
+                "ece": ece_score,
+                "misclassified_moving_avg": misclassified_moving_average[-1],
+                "val/loss": loss_val,
+                "val/acc1": acc1_val,
+                "val/acc5": acc5_val,
+            }
+        )
 
             # Testing for best model
             if acc1_val > best_acc:
@@ -473,6 +477,15 @@ def main(args):
                 loss_test, acc1_test, acc5_test
             )
         )
+
+        wandb.log(
+            {
+                "test/loss": loss_test,
+                "test/acc1": acc1_test,
+                "test/acc5": acc5_test,
+            }
+        )
+        
     else:
         print("Best model not saved, because no output_dir given.")
 
