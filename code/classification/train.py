@@ -323,7 +323,7 @@ def radius_confidence_loss(logits, labels, radii):
     """
     confidence = compute_estimated_confidence(logits, labels)
     true_class_confidence = confidence[labels]
-    radii = radii / radii.max()  # Normalize radius [0,1]
+    radii = radii / radii.max()
     loss = F.mse_loss(radii, true_class_confidence)
     return loss
 
