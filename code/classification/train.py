@@ -176,6 +176,7 @@ def compute_estimated_confidence(logits, labels):
 def radius_confidence_loss(logits, labels, radii):
     confidence = compute_estimated_confidence(logits, labels)
     true_class_confidence = confidence[labels]
+    radii = radii / radii.max()
     loss = torch.nn.functional.mse_loss(radii, true_class_confidence)
     return loss
 
