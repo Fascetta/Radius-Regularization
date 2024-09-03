@@ -10,26 +10,24 @@ lib_path = os.path.join(working_dir)
 sys.path.append(lib_path)
 # -----------------------------------------------------
 
-import wandb
 import random
-import torch
-from torch.nn import DataParallel
-import torch.nn.functional as F
 
 import configargparse
-from tqdm import tqdm
-
 import numpy as np
-
+import torch
+import torch.nn.functional as F
+import wandb
+from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.initialize import (
+    load_checkpoint,
     select_dataset,
     select_model,
     select_optimizer,
-    load_checkpoint,
 )
-from lib.utils.utils import AverageMeter, accuracy
-from classification.utils.calibration_metrics import CalibrationMetrics
 from lib.geoopt.manifolds.lorentz.math import dist0
+from lib.utils.utils import AverageMeter, accuracy
+from torch.nn import DataParallel
+from tqdm import tqdm
 
 
 def get_arguments():
@@ -50,7 +48,10 @@ def get_arguments():
 
     # Output settings
     parser.add_argument(
-        "--exp_name", default="L-ResNet18-WeightedRadiusLoss", type=str, help="Name of the experiment."
+        "--exp_name",
+        default="L-ResNet18-WeightedRadiusLoss",
+        type=str,
+        help="Name of the experiment.",
     )
     parser.add_argument(
         "--output_dir",
@@ -219,33 +220,33 @@ def get_arguments():
 
 class ECEMeter:
     def __init__(self, n_bins=15):
-        '''
+        """
         Initialize the ECEMeter with a specified number of bins.
-        
+
         Parameters:
         n_bins (int): Number of bins to use for the ECE calculation. Default is 15.
-        '''
+        """
         self.n_bins = n_bins
         self.reset()
 
     def reset(self):
-        '''
+        """
         Reset the internal state of ECE meter
-        
+
         This method initializes the bins for confidence, accuracy, and count to zeros.
-        '''
+        """
         self.confidence_bins = torch.zeros(self.n_bins)
         self.accuracy_bins = torch.zeros(self.n_bins)
         self.count_bins = torch.zeros(self.n_bins)
 
     def update(self, logits, labels):
-        '''
+        """
         Update the ECE calcultaion with a new set of predictions and labels.
-        
+
         Parameters:
         logits (Tensor): The logits output from the model (before applying softmax).
         labels (Tensor): The ground truth labels.
-        '''
+        """
         confidences, predictions = torch.max(F.softmax(logits, dim=1), 1)
         accuracies = predictions.eq(labels)
 
@@ -257,10 +258,10 @@ class ECEMeter:
             self.accuracy_bins[i] += accuracies[in_bin].sum().item()
 
     def compute(self):
-        '''
+        """
         Compute the Expected Calibration Error (ECE).
-        
-        '''
+
+        """
         ece = 0.0
         for i in range(self.n_bins):
             if self.count_bins[i] > 0:
@@ -338,7 +339,9 @@ def main(args):
             confidences, predictions = torch.max(torch.softmax(logits, dim=1), 1)
             embeddings = model.module.embed(x)
 
-            incorrect_indices = (predictions != y)  # Identify indices where predictions are incorrect
+            incorrect_indices = (
+                predictions != y
+            )  # Identify indices where predictions are incorrect
             incorrect_confidences = confidences[incorrect_indices]
             incorrect_embeddings = embeddings[incorrect_indices]
             radii = dist0(incorrect_embeddings, k=manifold_curvature)
@@ -396,18 +399,18 @@ def main(args):
             )
 
             wandb.log(
-            {
-                "epoch": epoch,
-                "train/loss": losses.avg,
-                "train/acc1": acc1.avg,
-                "train/acc5": acc5.avg,
-                "ece": ece_score,
-                "misclassified_moving_avg": misclassified_moving_average[-1],
-                "val/loss": loss_val,
-                "val/acc1": acc1_val,
-                "val/acc5": acc5_val,
-            }
-        )
+                {
+                    "epoch": epoch,
+                    "train/loss": losses.avg,
+                    "train/acc1": acc1.avg,
+                    "train/acc5": acc5.avg,
+                    "ece": ece_score,
+                    "misclassified_moving_avg": misclassified_moving_average[-1],
+                    "val/loss": loss_val,
+                    "val/acc1": acc1_val,
+                    "val/acc5": acc5_val,
+                }
+            )
 
             # Testing for best model
             if acc1_val > best_acc:
@@ -485,7 +488,7 @@ def main(args):
                 "test/acc5": acc5_test,
             }
         )
-        
+
     else:
         print("Best model not saved, because no output_dir given.")
 
