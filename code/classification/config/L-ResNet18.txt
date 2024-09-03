@@ -43,4 +43,4 @@ decoder_k = 1.0
 dataset = CIFAR-100 # CIFAR-10 or CIFAR-100 or Tiny-ImageNet
 
 # Logging
-wandb = True
+wandb = False
