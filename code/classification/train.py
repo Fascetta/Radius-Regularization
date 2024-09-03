@@ -3,6 +3,8 @@
 import os
 import sys
 
+from utils.ece_meter import ECEMeter
+
 working_dir = os.path.join(os.path.realpath(os.path.dirname(__file__)), "../")
 os.chdir(working_dir)
 
@@ -210,18 +212,27 @@ def getArguments():
         help="Select a dataset.",
     )
 
+    # Logging settings
+    parser.add_argument(
+        "--wandb",
+        action="store_true",
+        help="Use Weights & Biases for logging.",
+    )
+
     args = parser.parse_args()
 
     return args
 
 
 def main(args):
-    wandb.init(
-        entity="pinlab-sapienza",
-        project="CPHNN",
-        group=args.dataset,
-        name=args.exp_name,
-    )
+    if args.wandb:
+        wandb.init(
+            entity="pinlab-sapienza",
+            project="CPHNN",
+            group=args.dataset,
+            name=args.exp_name,
+            config=args,
+        )
     device = args.device[0]
     # torch.cuda.set_device(device)     deprecated
     torch.cuda.empty_cache()
@@ -253,8 +264,7 @@ def main(args):
     use_radius_loss = args.radius_loss > 0.0
     if use_radius_loss:
         print(f"Using radius loss with alpha={args.radius_loss}")
-        alpha = args.radius_loss
-        # radius_loss = lambda x: torch.mean(x ** 2) * alpha
+        rl_alpha = args.radius_loss
         radius_loss = radius_confidence_loss
 
     start_epoch = 0
@@ -274,6 +284,7 @@ def main(args):
 
     best_acc = 0.0
     best_epoch = 0
+    ece_meter = ECEMeter()
 
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
@@ -282,6 +293,7 @@ def main(args):
         radius_losses = AverageMeter("RadiusLoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
+        ece_meter.reset()
 
         for i, (x, y) in tqdm(enumerate(train_loader)):
             # ------- Start iteration -------
@@ -294,7 +306,7 @@ def main(args):
                 radii = torch.norm(embeds, dim=-1, p=2)
                 rl = radius_loss(logits, y, radii)
                 ce_loss = criterion(logits, y)
-                loss = ce_loss + rl * alpha
+                loss = ce_loss + rl * rl_alpha
             else:
                 logits = model(x)
                 loss = criterion(logits, y)  # Compute loss
@@ -311,9 +323,12 @@ def main(args):
                     radius_losses.update(rl.item())
                 acc1.update(top1.item())
                 acc5.update(top5.item())
+                ece_meter.update(logits, y)
 
             global_step += 1
-            # ------- End iteration -------
+
+        # ------- End iteration -------
+        ece_score = ece_meter.compute()
 
         # ------- Start validation and logging -------
         with torch.no_grad():
@@ -329,12 +344,12 @@ def main(args):
                 lr_scheduler.step()
 
             loss_val, acc1_val, acc5_val = evaluate(
-                model, val_loader, criterion, device
+                model, val_loader, criterion, device, num_classes=num_classes
             )
 
             if use_radius_loss:
                 print(
-                    "Epoch {}/{}: Loss={:.4f}, RadiusLoss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                    "Epoch {}/{}: Loss={:.4f}, RadiusLoss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, ECE={:.4f}".format(
                         epoch + 1,
                         args.num_epochs,
                         losses.avg,
@@ -344,11 +359,12 @@ def main(args):
                         loss_val,
                         acc1_val,
                         acc5_val,
+                        ece_score,
                     )
                 )
             else:
                 print(
-                    "Epoch {}/{}: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                    "Epoch {}/{}: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, Validation: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}, ECE={:.4f}".format(
                         epoch + 1,
                         args.num_epochs,
                         losses.avg,
@@ -357,7 +373,22 @@ def main(args):
                         loss_val,
                         acc1_val,
                         acc5_val,
+                        ece_score,
                     )
+                )
+
+            if args.wandb:
+                wandb.log(
+                    {
+                        "epoch": epoch,
+                        "train/loss": losses.avg,
+                        "train/acc1": acc1.avg,
+                        "train/acc5": acc5.avg,
+                        "ece": ece_score,
+                        "val/loss": loss_val,
+                        "val/acc1": acc1_val,
+                        "val/acc5": acc5_val,
+                    }
                 )
 
             # Testing for best model
@@ -404,7 +435,9 @@ def main(args):
         print("Model not saved.")
 
     print("Testing final model...")
-    loss_test, acc1_test, acc5_test = evaluate(model, test_loader, criterion, device)
+    loss_test, acc1_test, acc5_test = evaluate(
+        model, test_loader, criterion, device, num_classes=num_classes
+    )
 
     print(
         "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
@@ -420,7 +453,7 @@ def main(args):
         model.module.load_state_dict(checkpoint["model"], strict=True)
 
         loss_test, acc1_test, acc5_test = evaluate(
-            model, test_loader, criterion, device
+            model, test_loader, criterion, device, num_classes=num_classes
         )
 
         print(
@@ -440,6 +473,7 @@ def evaluate(
     device,
     calibration_metrics=False,
     tau=None,
+    num_classes=100,
 ):
     """Evaluates model performance"""
     model.eval()
@@ -452,7 +486,7 @@ def evaluate(
     norms = []
 
     if calibration_metrics:
-        cm = CalibrationMetrics(n_classes=100)
+        cm = CalibrationMetrics(n_classes=num_classes)
 
     for i, (x, y) in enumerate(dataloader):
         x = x.to(device)
