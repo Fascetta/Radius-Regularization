@@ -30,10 +30,8 @@ from classification.utils.initialize import (
     select_optimizer,
 )
 from classification.utils.radius_loss import radius_confidence_loss
-from lib.geoopt.manifolds.lorentz.math import dist0
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
-from torch.nn import functional as F
 from tqdm import tqdm
 
 
@@ -282,7 +280,6 @@ def main(args):
 
     best_acc = 0.0
     best_epoch = 0
-    manifold_curvature = torch.tensor(1.0)
 
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
@@ -298,7 +295,7 @@ def main(args):
             if args.radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
-                radii = dist0(embeds, k=manifold_curvature)
+                radii = model.dec_manifold.dist0(embeds)
                 rl = radius_loss(logits, y, radii)
                 ce_loss = criterion(logits, y)
                 loss = ce_loss + rl * rl_alpha
@@ -486,7 +483,7 @@ def evaluate(
     acc1 = AverageMeter("Acc@1", ":6.2f")
     acc5 = AverageMeter("Acc@5", ":6.2f")
 
-    norms = []
+    radii = []
     cm = CalibrationMetrics(n_classes=num_classes)
 
     for i, (x, y) in enumerate(dataloader):
@@ -498,7 +495,8 @@ def evaluate(
             embeds = embeds / tau
         logits = model.module.decoder(embeds)
 
-        norms.append(torch.norm(embeds, dim=-1, p=2).cpu().numpy())
+        radius = model.dec_manifold.dist0(embeds)
+        radii.append(radius.cpu().numpy())
 
         logits = torch.nn.functional.softmax(logits, dim=-1)
 
@@ -516,9 +514,9 @@ def evaluate(
         print(f"{k.upper()}: {round(v, 4)}")
     print("\n=============================== \n")
 
-    norms = np.concatenate(norms)
-    avg_norm = np.mean(norms)
-    print(f"Average norm: {avg_norm}")
+    radii = np.concatenate(radii)
+    avg_radius = np.mean(radii)
+    print(f"Average norm: {avg_radius}")
 
     return losses.avg, acc1.avg, acc5.avg, calib_metrics
 
