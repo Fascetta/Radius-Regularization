@@ -295,7 +295,7 @@ def main(args):
             if args.radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
-                radii = model.dec_manifold.dist0(embeds)
+                radii = model.module.dec_manifold.dist0(embeds)
                 rl = radius_loss(logits, y, radii)
                 ce_loss = criterion(logits, y)
                 loss = ce_loss + rl * rl_alpha
@@ -495,7 +495,7 @@ def evaluate(
             embeds = embeds / tau
         logits = model.module.decoder(embeds)
 
-        radius = model.dec_manifold.dist0(embeds)
+        radius = model.module.dec_manifold.dist0(embeds)
         radii.append(radius.cpu().numpy())
 
         logits = torch.nn.functional.softmax(logits, dim=-1)
