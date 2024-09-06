@@ -14,19 +14,19 @@ def get_optimal_radius_tau(model, val_loader, criterion, device):
 
     embeddings_list, labels_list = [], []
 
-    with torch.no_grad():
-        for x, y in val_loader:
-            x, y = x.to(device), y.to(device)
+    for x, y in val_loader:
+        x, y = x.to(device), y.to(device)
+        with torch.no_grad():
             embeds = model.module.embed(x)
-            embeddings_list.append(embeds.cpu())
-            labels_list.append(y.cpu())
+        embeddings_list.append(embeds.cpu())
+        labels_list.append(y.cpu())
 
     embeds = torch.cat(embeddings_list)
     labels = torch.cat(labels_list)
 
     res = minimize(
         lambda tau: scaled_cross_entropy_loss(embeds, labels, tau),
-        1,
+        1.0,
         bounds=[(0.05, 5.0)],
         options={"eps": 0.01},
     )
@@ -36,18 +36,29 @@ def get_optimal_radius_tau(model, val_loader, criterion, device):
     return optimal_tau
 
 
-def get_optimal_confidence_tau(logits, labels, criterion):
+def get_optimal_confidence_tau(model, val_loader, criterion, device):
 
     def scaled_cross_entropy_loss(logits, labels, tau):
         scaled_logits = logits / tau
         loss = criterion(scaled_logits, labels)
         return loss.item()
 
-    initial_tau = 1.0
+    logits_list, labels_list = [], []
+
+    for x, y in val_loader:
+        x, y = x.to(device), y.to(device)
+        with torch.no_grad():
+            embeds = model.module.embed(x)
+            logits = model.module.decoder(embeds)
+        logits_list.append(logits.cpu())
+        labels_list.append(y.cpu())
+
+    logits = torch.cat(logits_list)
+    labels = torch.cat(labels_list)
 
     res = minimize(
         lambda tau: scaled_cross_entropy_loss(logits, labels, tau),
-        initial_tau,
+        1.0,
         method="L-BFGS-B",
         bounds=[(0.05, 3.0)],
     )

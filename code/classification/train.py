@@ -287,6 +287,7 @@ def main(args):
         radius_losses = AverageMeter("RadiusLoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
+        # radius_running_max = 0.0
 
         for _, (x, y) in tqdm(enumerate(train_loader)):
             # ------- Start iteration -------
@@ -296,6 +297,12 @@ def main(args):
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
                 radii = model.module.dec_manifold.dist0(embeds)
+
+                # update running max radius
+                # radius_running_max = max(radius_running_max, radii.max().item())
+                # rescale radii to be in [0, 1]
+                # radii = radii / radius_running_max
+
                 rl = radius_loss(logits, y, radii)
                 ce_loss = criterion(logits, y)
                 loss = ce_loss + rl * rl_alpha
@@ -473,6 +480,7 @@ def evaluate(
     criterion,
     device,
     num_classes,
+    calibration=None,
     tau=None,
 ):
     """Evaluates model performance"""
@@ -491,9 +499,12 @@ def evaluate(
         y = y.to(device)
 
         embeds = model.module.embed(x)
-        if tau:
+        if calibration == "radius" and tau:
             embeds = embeds / tau
+            
         logits = model.module.decoder(embeds)
+        if calibration == "confidence" and tau:
+            logits = logits / tau
 
         radius = model.module.dec_manifold.dist0(embeds)
         radii.append(radius.cpu().numpy())

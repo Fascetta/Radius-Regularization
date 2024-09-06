@@ -1,7 +1,7 @@
 # CUDA_VISIBLE_DEVICES=1 python code/classification/train.py -c classification/config/L-ResNet18.txt
 
 # Output settings
-exp_name = L-ResNet18-RadiusLoss-mse-2
+exp_name = L-ResNet18-RadiusLoss-mse-runmax
 output_dir = classification/output/cifar-100
 
 # General settings
@@ -10,8 +10,9 @@ dtype = float32
 seed = 1
 
 # Test
-# load_checkpoint = classification/output/cifar-100/best_L-ResNet18-RadiusLoss-mse-no-val.pth
-# mode = calibrate
+load_checkpoint = classification/output/cifar-100/best_L-ResNet18-RadiusLoss-mse-2.pth
+mode = calibrate
+calibration = confidence
 
 # General training hyperparameters
 num_epochs = 200
@@ -43,4 +44,4 @@ decoder_k = 1.0
 dataset = CIFAR-100 # CIFAR-10 or CIFAR-100 or Tiny-ImageNet
 
 # Logging
-wandb = False
+wandb = True
