@@ -30,6 +30,7 @@ from classification.utils.initialize import (
     select_optimizer,
 )
 from classification.utils.radius_loss import radius_confidence_loss
+from classification.utils.focal_loss import FocalLoss
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
 from tqdm import tqdm
@@ -260,6 +261,7 @@ def main(args):
     print("Creating optimizer...")
     optimizer, lr_scheduler = select_optimizer(model, args)
     criterion = torch.nn.CrossEntropyLoss()
+    # criterion = FocalLoss(gamma=3.0, reduction="mean")
 
     if args.radius_loss:
         print(f"Using radius loss with alpha={args.radius_loss}")
@@ -296,7 +298,11 @@ def main(args):
             if args.radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
-                radii = model.module.dec_manifold.dist0(embeds)
+
+                if args.decoder_manifold == "euclidean":
+                    radii = torch.norm(embeds, dim=-1)
+                else:
+                    radii = model.module.dec_manifold.dist0(embeds)
 
                 # update running max radius
                 # radius_running_max = max(radius_running_max, radii.max().item())
@@ -340,7 +346,7 @@ def main(args):
                 lr_scheduler.step()
 
             loss_val, acc1_val, acc5_val, cm = evaluate(
-                model, val_loader, criterion, device, num_classes
+                model, val_loader, criterion, device, num_classes, manifold=args.decoder_manifold
             )
 
             if args.radius_loss:
@@ -350,6 +356,7 @@ def main(args):
                     f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
                     f"Validation: Loss={loss_val:.4f}, "
                     f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
+                    f"\n"
                 )
             else:
                 print(
@@ -359,6 +366,7 @@ def main(args):
                     f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
                     f"Validation: Loss={loss_val:.4f}, "
                     f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
+                    f"\n"
                 )
 
             if args.wandb:
@@ -434,7 +442,7 @@ def main(args):
 
     print("Testing final model...")
     loss_test, acc1_test, acc5_test, cm = evaluate(
-        model, test_loader, criterion, device, num_classes
+        model, test_loader, criterion, device, num_classes, manifold=args.decoder_manifold
     )
 
     print(
@@ -451,7 +459,7 @@ def main(args):
         model.module.load_state_dict(checkpoint["model"], strict=True)
 
         loss_test, acc1_test, acc5_test, cm = evaluate(
-            model, test_loader, criterion, device, num_classes
+            model, test_loader, criterion, device, num_classes, manifold=args.decoder_manifold
         )
 
         print(
@@ -482,6 +490,7 @@ def evaluate(
     num_classes,
     calibration=None,
     tau=None,
+    manifold="euclidean",
 ):
     """Evaluates model performance"""
     model.eval()
@@ -501,12 +510,15 @@ def evaluate(
         embeds = model.module.embed(x)
         if calibration == "radius" and tau:
             embeds = embeds / tau
-            
+
         logits = model.module.decoder(embeds)
         if calibration == "confidence" and tau:
             logits = logits / tau
 
-        radius = model.module.dec_manifold.dist0(embeds)
+        if manifold == "euclidean":
+            radius = torch.norm(embeds, dim=-1)
+        else:
+            radius = model.module.dec_manifold.dist0(embeds)
         radii.append(radius.cpu().numpy())
 
         logits = torch.nn.functional.softmax(logits, dim=-1)
