@@ -23,14 +23,14 @@ import numpy as np
 import torch
 import wandb
 from classification.utils.calibration_metrics import CalibrationMetrics
+from classification.utils.focal_loss import FocalLoss
 from classification.utils.initialize import (
     load_checkpoint,
     select_dataset,
     select_model,
     select_optimizer,
 )
-from classification.utils.radius_loss import radius_confidence_loss
-from classification.utils.focal_loss import FocalLoss
+from classification.utils.radius_loss import radius_accuracy_loss, RadiusConfidenceLoss
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
 from tqdm import tqdm
@@ -132,6 +132,13 @@ def get_arguments():
         default=0.2,
         type=float,
         help="Gamma parameter of LR scheduler.",
+    )
+    parser.add_argument(
+        "--base_loss",
+        default="cross_entropy",
+        type=str,
+        choices=["cross_entropy", "focal"],
+        help="Base loss function for training.",
     )
 
     # General validation/testing hyperparameters
@@ -260,13 +267,17 @@ def main(args):
 
     print("Creating optimizer...")
     optimizer, lr_scheduler = select_optimizer(model, args)
-    criterion = torch.nn.CrossEntropyLoss()
-    # criterion = FocalLoss(gamma=3.0, reduction="mean")
+
+    if args.base_loss == "cross_entropy":
+        criterion = torch.nn.CrossEntropyLoss()
+    elif args.base_loss == "focal":
+        criterion = FocalLoss(gamma=2.0, reduction="mean")
 
     if args.radius_loss:
         print(f"Using radius loss with alpha={args.radius_loss}")
         rl_alpha = args.radius_loss
-        radius_loss = radius_confidence_loss
+        radius_loss = radius_accuracy_loss
+        # radius_loss = RadiusConfidenceLoss(n_bins=15)
 
     start_epoch = 0
     if args.load_checkpoint:
@@ -310,6 +321,7 @@ def main(args):
                 # radii = radii / radius_running_max
 
                 rl = radius_loss(logits, y, radii)
+                # rl = radius_loss(logits, radii, y)
                 ce_loss = criterion(logits, y)
                 loss = ce_loss + rl * rl_alpha
             else:
@@ -346,7 +358,12 @@ def main(args):
                 lr_scheduler.step()
 
             loss_val, acc1_val, acc5_val, cm = evaluate(
-                model, val_loader, criterion, device, num_classes, manifold=args.decoder_manifold
+                model,
+                val_loader,
+                criterion,
+                device,
+                num_classes,
+                manifold=args.decoder_manifold,
             )
 
             if args.radius_loss:
@@ -442,7 +459,12 @@ def main(args):
 
     print("Testing final model...")
     loss_test, acc1_test, acc5_test, cm = evaluate(
-        model, test_loader, criterion, device, num_classes, manifold=args.decoder_manifold
+        model,
+        test_loader,
+        criterion,
+        device,
+        num_classes,
+        manifold=args.decoder_manifold,
     )
 
     print(
@@ -459,7 +481,12 @@ def main(args):
         model.module.load_state_dict(checkpoint["model"], strict=True)
 
         loss_test, acc1_test, acc5_test, cm = evaluate(
-            model, test_loader, criterion, device, num_classes, manifold=args.decoder_manifold
+            model,
+            test_loader,
+            criterion,
+            device,
+            num_classes,
+            manifold=args.decoder_manifold,
         )
 
         print(

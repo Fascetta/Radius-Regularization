@@ -16,7 +16,7 @@
             },
             "args": [
                 "-c",
-                "classification/config/L-ResNet18.txt"
+                "classification/config/E-ResNet18.txt"
             ]
         }
     ]
