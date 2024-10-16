@@ -121,6 +121,13 @@ def get_arguments():
         help="If learning rate should be reduced after step epochs using a LR scheduler.",
     )
     parser.add_argument(
+        "--lr_scheduler",
+        default="MultiStepLR",
+        type=str,
+        choices=["MultiStepLR", "CosineAnnealingLR"],
+        help="Learning rate scheduler.",
+    )
+    parser.add_argument(
         "--lr_scheduler_milestones",
         default=[60, 120, 160],
         type=int,
@@ -397,6 +404,7 @@ def main(args):
                 wandb.log(
                     {
                         "epoch": epoch,
+                        "lr": optimizer.param_groups[0]["lr"],
                         "train/loss": losses.avg,
                         "train/ce_loss": ce_losses.avg,
                         "train/radius_loss": radius_losses.avg,

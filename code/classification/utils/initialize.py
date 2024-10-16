@@ -1,12 +1,10 @@
 import torch
-from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-
+from classification.models.classifier import ResNetClassifier
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
-from torch.optim.lr_scheduler import MultiStepLR
-
-from classification.models.classifier import ResNetClassifier
+from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
 
 
 def load_checkpoint(model, optimizer, lr_scheduler, args):
@@ -91,10 +89,14 @@ def select_optimizer(model, args):
 
     lr_scheduler = None
     if args.use_lr_scheduler:
-        lr_scheduler = MultiStepLR(
-            optimizer, milestones=args.lr_scheduler_milestones, gamma=args.lr_scheduler_gamma
-        )
-        
+        if args.lr_scheduler == "MultiStepLR":
+            lr_scheduler = MultiStepLR(
+                optimizer, milestones=args.lr_scheduler_milestones, gamma=args.lr_scheduler_gamma
+            )
+        elif args.lr_scheduler == "CosineAnnealingLR":
+            lr_scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epochs, eta_min=0)
+        else:
+            raise "Learning rate scheduler not found. Wrong lr_scheduler in configuration... -> " + args.lr_scheduler
 
     return optimizer, lr_scheduler
 
