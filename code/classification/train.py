@@ -30,7 +30,7 @@ from classification.utils.initialize import (
     select_model,
     select_optimizer,
 )
-from classification.utils.radius_loss import radius_accuracy_loss, RadiusConfidenceLoss
+from classification.utils.radius_loss import RadiusConfidenceLoss, radius_accuracy_loss
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
 from tqdm import tqdm
@@ -232,6 +232,10 @@ def get_arguments():
 
     parsed_args = parser.parse_args()
 
+    parsed_args.output_dir = os.path.join(
+        parsed_args.output_dir, str(parsed_args.dataset).lower()
+    )
+
     return parsed_args
 
 
@@ -298,6 +302,7 @@ def main(args):
         model.train()
         losses = AverageMeter("Loss", ":.4e")
         radius_losses = AverageMeter("RadiusLoss", ":.4e")
+        ce_losses = AverageMeter("CELoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
         # radius_running_max = 0.0
@@ -320,13 +325,14 @@ def main(args):
                 # rescale radii to be in [0, 1]
                 # radii = radii / radius_running_max
 
-                rl = radius_loss(logits, y, radii)
+                rl = radius_loss(logits, y, radii) * rl_alpha
                 # rl = radius_loss(logits, radii, y)
                 ce_loss = criterion(logits, y)
-                loss = ce_loss + rl * rl_alpha
+                loss = ce_loss + rl
             else:
                 logits = model(x)
-                loss = criterion(logits, y)  # Compute loss
+                loss = ce_loss = criterion(logits, y)  # Compute loss
+                rl = torch.tensor(0.0)
 
             optimizer.zero_grad()  # Reset gradients tensoes
             loss.backward()  # Back-Propagation
@@ -336,6 +342,7 @@ def main(args):
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
                 losses.update(loss.item())
+                ce_losses.update(ce_loss.item())
                 if args.radius_loss:
                     radius_losses.update(rl.item())
                 acc1.update(top1.item())
@@ -391,6 +398,8 @@ def main(args):
                     {
                         "epoch": epoch,
                         "train/loss": losses.avg,
+                        "train/ce_loss": ce_losses.avg,
+                        "train/radius_loss": radius_losses.avg,
                         "train/acc1": acc1.avg,
                         "train/acc5": acc5.avg,
                         "mce": cm["mce"],
