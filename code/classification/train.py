@@ -30,7 +30,7 @@ from classification.utils.initialize import (
     select_model,
     select_optimizer,
 )
-from classification.utils.radius_loss import RadiusConfidenceLoss, radius_accuracy_loss
+from classification.utils.radius_loss import RadiusConfidenceLoss, RadiusAccuracyLoss
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
 from tqdm import tqdm
@@ -112,7 +112,7 @@ def get_arguments():
         "--optimizer",
         default="RiemannianSGD",
         type=str,
-        choices=["RiemannianAdam", "RiemannianSGD", "Adam", "SGD"],
+        choices=["RiemannianAdam", "RiemannianSGD", "Adam", "SGD", "AdamW"],
         help="Optimizer for training.",
     )
     parser.add_argument(
@@ -215,10 +215,16 @@ def get_arguments():
         help="Clipping parameter for hybrid HNNs proposed by Guo et al. (2022)",
     )
     parser.add_argument(
-        "--radius_loss",
+        "--radius_acc_loss",
         default=0.0,
         type=float,
-        help="Use radius focal loss together with cross-entropy loss.",
+        help="Use radius accuracy loss together with cross-entropy loss.",
+    )
+    parser.add_argument(
+        "--radius_conf_loss",
+        default=0.0,
+        type=float,
+        help="Use radius confidence loss together with cross-entropy loss.",
     )
 
     # Dataset settings
@@ -284,11 +290,15 @@ def main(args):
     elif args.base_loss == "focal":
         criterion = FocalLoss(gamma=2.0, reduction="mean")
 
-    if args.radius_loss:
-        print(f"Using radius loss with alpha={args.radius_loss}")
-        rl_alpha = args.radius_loss
-        radius_loss = radius_accuracy_loss
-        # radius_loss = RadiusConfidenceLoss(n_bins=15)
+    ral_alpha = args.radius_acc_loss
+    rcl_alpha = args.radius_conf_loss
+    radius_acc_loss = RadiusAccuracyLoss()
+    radius_conf_loss = RadiusConfidenceLoss(n_bins=15)
+    print(f"Using radius accuracy loss with alpha = {ral_alpha}")
+    print(f"Using radius confidence loss with alpha = {rcl_alpha}")
+
+    if ral_alpha > 0.0 or rcl_alpha > 0.0:
+        use_radius_loss = True
 
     start_epoch = 0
     if args.load_checkpoint:
@@ -308,7 +318,8 @@ def main(args):
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
         losses = AverageMeter("Loss", ":.4e")
-        radius_losses = AverageMeter("RadiusLoss", ":.4e")
+        radius_acc_losses = AverageMeter("RadiusAccuracyLoss", ":.4e")
+        radius_conf_losses = AverageMeter("RadiusConfidenceLoss", ":.4e")
         ce_losses = AverageMeter("CELoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
@@ -318,7 +329,7 @@ def main(args):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
 
-            if args.radius_loss:
+            if use_radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
 
@@ -332,14 +343,14 @@ def main(args):
                 # rescale radii to be in [0, 1]
                 # radii = radii / radius_running_max
 
-                rl = radius_loss(logits, y, radii) * rl_alpha
-                # rl = radius_loss(logits, radii, y)
+                ral = radius_acc_loss(logits, y, radii) * ral_alpha
+                rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
                 ce_loss = criterion(logits, y)
-                loss = ce_loss + rl
+                loss = ce_loss + ral + rcl
             else:
                 logits = model(x)
                 loss = ce_loss = criterion(logits, y)  # Compute loss
-                rl = torch.tensor(0.0)
+                ral, rcl = torch.tensor(0.0), torch.tensor(0.0)
 
             optimizer.zero_grad()  # Reset gradients tensoes
             loss.backward()  # Back-Propagation
@@ -350,8 +361,8 @@ def main(args):
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
                 losses.update(loss.item())
                 ce_losses.update(ce_loss.item())
-                if args.radius_loss:
-                    radius_losses.update(rl.item())
+                radius_acc_losses.update(ral.item())
+                radius_conf_losses.update(rcl.item())
                 acc1.update(top1.item())
                 acc5.update(top5.item())
 
@@ -380,7 +391,7 @@ def main(args):
                 manifold=args.decoder_manifold,
             )
 
-            if args.radius_loss:
+            if not use_radius_loss:
                 print(
                     f"Epoch {epoch + 1}/{args.num_epochs}: "
                     f"Loss={losses.avg:.4f}, "
@@ -393,7 +404,8 @@ def main(args):
                 print(
                     f"Epoch {epoch + 1}/{args.num_epochs}: "
                     f"Loss={losses.avg:.4f} "
-                    f"RadiusLoss={radius_losses.avg:.4f}, "
+                    f"RadiusAccLoss={radius_acc_losses.avg:.4f}, "
+                    f"RadiusConfLoss={radius_conf_losses.avg:.4f}, "
                     f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
                     f"Validation: Loss={loss_val:.4f}, "
                     f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
@@ -407,7 +419,8 @@ def main(args):
                         "lr": optimizer.param_groups[0]["lr"],
                         "train/loss": losses.avg,
                         "train/ce_loss": ce_losses.avg,
-                        "train/radius_loss": radius_losses.avg,
+                        "train/radius_acc_loss": radius_acc_losses.avg,
+                        "train/radius_conf_loss": radius_conf_losses.avg,
                         "train/acc1": acc1.avg,
                         "train/acc5": acc5.avg,
                         "mce": cm["mce"],
