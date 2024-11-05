@@ -23,14 +23,14 @@ import numpy as np
 import torch
 import wandb
 from classification.utils.calibration_metrics import CalibrationMetrics
-from classification.utils.focal_loss import FocalLoss
+from classification.losses.focal_loss import FocalLoss
 from classification.utils.initialize import (
     load_checkpoint,
     select_dataset,
     select_model,
     select_optimizer,
 )
-from classification.utils.radius_loss import RadiusConfidenceLoss, RadiusAccuracyLoss
+from classification.losses.radius_loss import RadiusConfidenceLoss, RadiusAccuracyLoss
 from lib.utils.utils import AverageMeter, accuracy
 from torch.nn import DataParallel
 from tqdm import tqdm
