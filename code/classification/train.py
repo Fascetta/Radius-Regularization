@@ -276,6 +276,7 @@ def main(args):
     print("Creating model...")
     model = select_model(img_dim, num_classes, args)
     model = model.to(device)
+    model = DataParallel(model, device_ids=args.device)
     num_params = sum(p.numel() for p in model.parameters())
     num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(
@@ -292,11 +293,12 @@ def main(args):
 
     ral_alpha = args.radius_acc_loss
     rcl_alpha = args.radius_conf_loss
-    radius_acc_loss = RadiusAccuracyLoss()
-    radius_conf_loss = RadiusConfidenceLoss(n_bins=15)
+    radius_acc_loss = RadiusAccuracyLoss() if ral_alpha > 0.0 else None
+    radius_conf_loss = RadiusConfidenceLoss(n_bins=15) if rcl_alpha > 0.0 else None
     print(f"Using radius accuracy loss with alpha = {ral_alpha}")
     print(f"Using radius confidence loss with alpha = {rcl_alpha}")
 
+    use_radius_loss = False
     if ral_alpha > 0.0 or rcl_alpha > 0.0:
         use_radius_loss = True
 
@@ -307,13 +309,14 @@ def main(args):
             model, optimizer, lr_scheduler, args
         )
 
-    model = DataParallel(model, device_ids=args.device)
-
     print("Training...")
     global_step = start_epoch * len(train_loader)
 
     best_acc = 0.0
     best_epoch = 0
+
+    # batch accumulation parameter
+    accum_iter = 1
 
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
@@ -325,7 +328,7 @@ def main(args):
         acc5 = AverageMeter("Acc@5", ":6.2f")
         # radius_running_max = 0.0
 
-        for _, (x, y) in tqdm(enumerate(train_loader)):
+        for batch_idx, (x, y) in tqdm(enumerate(train_loader)):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
 
@@ -343,19 +346,28 @@ def main(args):
                 # rescale radii to be in [0, 1]
                 # radii = radii / radius_running_max
 
-                ral = radius_acc_loss(logits, y, radii) * ral_alpha
-                rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
                 ce_loss = criterion(logits, y)
+
+                if ral_alpha > 0.0:
+                    ral = radius_acc_loss(logits, y, radii) * ral_alpha
+                else:
+                    ral = torch.zeros_like(ce_loss)
+                
+                if rcl_alpha > 0.0:
+                    rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
+                else:
+                    rcl = torch.zeros_like(ce_loss)
+
                 loss = ce_loss + ral + rcl
             else:
                 logits = model(x)
                 loss = ce_loss = criterion(logits, y)  # Compute loss
-                ral, rcl = torch.tensor(0.0), torch.tensor(0.0)
+                ral, rcl = torch.zeros_like(ce_loss), torch.zeros_like(ce_loss)
 
-            optimizer.zero_grad()  # Reset gradients tensoes
-            loss.backward()  # Back-Propagation
-
-            optimizer.step()  # Update optimazer
+            if ((batch_idx + 1) % accum_iter == 0) or (batch_idx + 1 == len(train_loader)):
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
 
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
