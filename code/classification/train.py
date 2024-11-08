@@ -8,6 +8,16 @@ Returns:
 import os
 import random
 import sys
+import copy
+
+import configargparse
+import learn2learn as l2l
+import numpy as np
+import torch
+from torch.nn import DataParallel
+from tqdm import tqdm
+
+import wandb
 
 working_dir = os.path.join(os.path.realpath(os.path.dirname(__file__)), "../")
 os.chdir(working_dir)
@@ -16,24 +26,14 @@ lib_path = os.path.join(working_dir)
 sys.path.append(lib_path)
 # -----------------------------------------------------
 
-import random
-
-import configargparse
-import numpy as np
-import torch
-import wandb
 from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.focal_loss import FocalLoss
-from classification.utils.initialize import (
-    load_checkpoint,
-    select_dataset,
-    select_model,
-    select_optimizer,
-)
-from classification.utils.radius_loss import RadiusConfidenceLoss, RadiusAccuracyLoss
+from classification.utils.initialize import (load_checkpoint, select_dataset,
+                                             select_model, select_optimizer)
+from classification.utils.radius_loss import (RadiusAccuracyLoss,
+                                              RadiusConfidenceLoss)
+from classification.utils.dECE import differentiable_ece
 from lib.utils.utils import AverageMeter, accuracy
-from torch.nn import DataParallel
-from tqdm import tqdm
 
 
 def get_arguments():
@@ -68,7 +68,7 @@ def get_arguments():
         "--device",
         default="cuda:0",
         type=lambda s: [str(item) for item in s.replace(" ", "").split(",")],
-        help="List of devices split by comma (e.g. cuda:0,cuda:1), can also be a single device or 'cpu')",
+        help="List of devices split by comma, can also be a single device or 'cpu')",
     )
     parser.add_argument(
         "--dtype",
@@ -227,6 +227,27 @@ def get_arguments():
         help="Use radius confidence loss together with cross-entropy loss.",
     )
 
+    parser.add_argument(
+        "--meta_lr",
+        default=0.0,
+        type=float,
+        help="Use Meta-Learning.",
+    )
+
+    parser.add_argument(
+    "--num_inner_steps",
+    default=5,
+    type=int,
+    help="Define the number of steps in the inner loop of Meta-Learning",
+    )
+
+    parser.add_argument(
+    "--ece_alpha", 
+    default=0.0,
+    type=float,
+    help="Weight for ECE loss in total loss."
+    )
+
     # Dataset settings
     parser.add_argument(
         "--dataset",
@@ -285,10 +306,11 @@ def main(args):
     print("Creating optimizer...")
     optimizer, lr_scheduler = select_optimizer(model, args)
 
-    if args.base_loss == "cross_entropy":
-        criterion = torch.nn.CrossEntropyLoss()
-    elif args.base_loss == "focal":
+
+    if args.base_loss == "focal":
         criterion = FocalLoss(gamma=2.0, reduction="mean")
+    else:
+        criterion = torch.nn.CrossEntropyLoss()
 
     ral_alpha = args.radius_acc_loss
     rcl_alpha = args.radius_conf_loss
@@ -297,6 +319,7 @@ def main(args):
     print(f"Using radius accuracy loss with alpha = {ral_alpha}")
     print(f"Using radius confidence loss with alpha = {rcl_alpha}")
 
+    use_radius_loss = False
     if ral_alpha > 0.0 or rcl_alpha > 0.0:
         use_radius_loss = True
 
@@ -308,6 +331,20 @@ def main(args):
         )
 
     model = DataParallel(model, device_ids=args.device)
+
+    if args.meta_lr:
+        model = l2l.algorithms.MAML(model, lr=args.meta_lr, first_order=False)
+
+        def inner_loop(model, x, y, criterion, args):
+            learner = copy.deepcopy(model)  # Clone model for inner-loop updates
+            inner_optimizer = torch.optim.SGD(learner.parameters(), lr=args.lr)
+            for _ in range(args.num_inner_steps):  # Inner-loop steps
+                logits = learner(x)
+                inner_loss = criterion(logits, y)
+                inner_optimizer.zero_grad()
+                inner_loss.backward()
+                inner_optimizer.step()
+            return learner  # Return adapted model
 
     print("Training...")
     global_step = start_epoch * len(train_loader)
@@ -323,46 +360,69 @@ def main(args):
         ce_losses = AverageMeter("CELoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
-        # radius_running_max = 0.0
 
         for _, (x, y) in tqdm(enumerate(train_loader)):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
 
-            if use_radius_loss:
-                embeds = model.module.embed(x)
-                logits = model.module.decoder(embeds)
+            if args.meta_lr:
+                # Meta-learning inner-loop adaptation
 
-                if args.decoder_manifold == "euclidean":
-                    radii = torch.norm(embeds, dim=-1)
+                adapted_model = inner_loop(model, x, y, criterion, args)
+                logits = adapted_model(x)  # Use adapted model for outer-loop loss
+
+                if use_radius_loss:
+                    # Calculate losses including radius-based losses if specified
+                    embeds = adapted_model.module.embed(x)
+                    logits = adapted_model.module.decoder(embeds)
+                    if args.decoder_manifold == "euclidean":
+                        radii = torch.norm(embeds, dim=-1)
+                    else:
+                        radii = adapted_model.module.dec_manifold.dist0(embeds)
+
+                    ral = radius_acc_loss(logits, y, radii) * ral_alpha
+                    rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
+                    ce_loss = criterion(logits, y)
+
+                    diff_ece = differentiable_ece(logits, y)
+                    loss = ce_loss + ral + rcl + diff_ece
                 else:
-                    radii = model.module.dec_manifold.dist0(embeds)
+                    # Incorporate differentiable ECE
+                    ce_loss = criterion(logits, y)
+                    diff_ece = differentiable_ece(logits, y)
+                    loss = ce_loss + diff_ece
 
-                # update running max radius
-                # radius_running_max = max(radius_running_max, radii.max().item())
-                # rescale radii to be in [0, 1]
-                # radii = radii / radius_running_max
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()  # Meta-learning outer-loop update
 
-                ral = radius_acc_loss(logits, y, radii) * ral_alpha
-                rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
-                ce_loss = criterion(logits, y)
-                loss = ce_loss + ral + rcl
             else:
-                logits = model(x)
-                loss = ce_loss = criterion(logits, y)  # Compute loss
-                ral, rcl = torch.tensor(0.0), torch.tensor(0.0)
+                # Standard training procedure without meta-learning
+                if use_radius_loss:
+                    embeds = model.module.embed(x)
+                    logits = model.module.decoder(embeds)
+                    if args.decoder_manifold == "euclidean":
+                        radii = torch.norm(embeds, dim=-1)
+                    else:
+                        radii = model.module.dec_manifold.dist0(embeds)
+                    ral = radius_acc_loss(logits, y, radii) * ral_alpha
+                    rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
+                    ce_loss = criterion(logits, y)
+                    loss = ce_loss + ral + rcl
+                else:
+                    logits = model(x)
+                    ce_loss = criterion(logits, y)
+                    loss = ce_loss  # Loss calculation without meta-learning
 
-            optimizer.zero_grad()  # Reset gradients tensoes
-            loss.backward()  # Back-Propagation
-
-            optimizer.step()  # Update optimazer
-
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
                 losses.update(loss.item())
                 ce_losses.update(ce_loss.item())
-                radius_acc_losses.update(ral.item())
-                radius_conf_losses.update(rcl.item())
+                # radius_acc_losses.update(ral.item())
+                # radius_conf_losses.update(rcl.item())
                 acc1.update(top1.item())
                 acc5.update(top5.item())
 
@@ -469,7 +529,7 @@ def main(args):
         # ------- End validation and logging -------
 
     print("-----------------\nTraining finished\n-----------------")
-    print("Best epoch = {}, with Acc@1={:.4f}".format(best_epoch, best_acc))
+    print(f"Best epoch = {best_epoch}, with Acc@1={best_acc:.4f}")
 
     if args.output_dir:
         save_path = f"{args.output_dir}/final_{args.exp_name}.pth"
@@ -497,11 +557,7 @@ def main(args):
         manifold=args.decoder_manifold,
     )
 
-    print(
-        "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
-            loss_test, acc1_test, acc5_test
-        )
-    )
+    print(f"Results: Loss={loss_test:.4f}, Acc@1={acc1_test:.4f}, Acc@5={acc5_test:.4f}")
 
     print("Testing best model...")
     if args.output_dir:
@@ -560,7 +616,7 @@ def evaluate(
     radii = []
     cm = CalibrationMetrics(n_classes=num_classes)
 
-    for i, (x, y) in enumerate(dataloader):
+    for _, (x, y) in enumerate(dataloader):
         x = x.to(device)
         y = y.to(device)
 

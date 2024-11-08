@@ -23,7 +23,7 @@ optimizer = RiemannianSGD
 use_lr_scheduler = True
 lr_scheduler_milestones = [60,120,160]
 lr_scheduler_gamma = 0.2
-radius_loss = 1e-1
+# radius_loss = 1e-1
 
 # General validation/testing hyperparameters
 batch_size_test = 128
@@ -39,6 +39,12 @@ decoder_manifold = lorentz
 # learn_k = True
 encoder_k = 1.0
 decoder_k = 1.0
+
+# Meta-Learn settings
+
+meta_lr = 1e-1
+num_inner_steps = 5
+ece_alpha = 1e-1
 
 # Dataset settings
 dataset = CIFAR-100 # CIFAR-10 or CIFAR-100 or Tiny-ImageNet
