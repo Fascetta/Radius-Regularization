@@ -22,16 +22,17 @@ import configargparse
 import numpy as np
 import torch
 import wandb
-from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.losses.focal_loss import FocalLoss
+from classification.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss
+from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.initialize import (
     load_checkpoint,
     select_dataset,
     select_model,
     select_optimizer,
 )
-from classification.losses.radius_loss import RadiusConfidenceLoss, RadiusAccuracyLoss
 from lib.utils.utils import AverageMeter, accuracy
+from lightning.fabric import Fabric
 from torch.nn import DataParallel
 from tqdm import tqdm
 
@@ -69,6 +70,13 @@ def get_arguments():
         default="cuda:0",
         type=lambda s: [str(item) for item in s.replace(" ", "").split(",")],
         help="List of devices split by comma (e.g. cuda:0,cuda:1), can also be a single device or 'cpu')",
+    )
+    parser.add_argument(
+        "--gpus",
+        default=[0],
+        type=int,
+        nargs="+",
+        help="List of GPU IDs to use (e.g. 0,1,2).",
     )
     parser.add_argument(
         "--dtype",
@@ -253,15 +261,11 @@ def get_arguments():
 
 
 def main(args):
-    if args.wandb:
-        wandb.init(
-            entity="pinlab-sapienza",
-            project="CPHNN",
-            group=args.dataset,
-            name=args.exp_name,
-            config=args,
-        )
-    device = args.device[0]
+    fabric = Fabric(accelerator="gpu", devices=args.gpus)
+    device = fabric.device
+    fabric.launch()
+
+    # device = args.device[0]
     torch.cuda.empty_cache()
 
     print("Running experiment: " + args.exp_name)
@@ -276,7 +280,7 @@ def main(args):
     print("Creating model...")
     model = select_model(img_dim, num_classes, args)
     model = model.to(device)
-    model = DataParallel(model, device_ids=args.device)
+    # model = DataParallel(model, device_ids=args.device)
     num_params = sum(p.numel() for p in model.parameters())
     num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(
@@ -285,6 +289,12 @@ def main(args):
 
     print("Creating optimizer...")
     optimizer, lr_scheduler = select_optimizer(model, args)
+
+    print("Setup Fabric")
+    model, optimizer = fabric.setup(model, optimizer)
+    train_loader, val_loader, test_loader = fabric.setup_dataloaders(
+        train_loader, val_loader, test_loader
+    )
 
     if args.base_loss == "cross_entropy":
         criterion = torch.nn.CrossEntropyLoss()
@@ -352,7 +362,7 @@ def main(args):
                     ral = radius_acc_loss(logits, y, radii) * ral_alpha
                 else:
                     ral = torch.zeros_like(ce_loss)
-                
+
                 if rcl_alpha > 0.0:
                     rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
                 else:
@@ -364,9 +374,12 @@ def main(args):
                 loss = ce_loss = criterion(logits, y)  # Compute loss
                 ral, rcl = torch.zeros_like(ce_loss), torch.zeros_like(ce_loss)
 
-            if ((batch_idx + 1) % accum_iter == 0) or (batch_idx + 1 == len(train_loader)):
+            if ((batch_idx + 1) % accum_iter == 0) or (
+                batch_idx + 1 == len(train_loader)
+            ):
                 optimizer.zero_grad()
-                loss.backward()
+                # loss.backward()
+                fabric.backward(loss)
                 optimizer.step()
 
             with torch.no_grad():
@@ -632,5 +645,14 @@ if __name__ == "__main__":
         if not os.path.exists(args.output_dir):
             print("Create missing output directory...")
             os.mkdir(args.output_dir)
+    
+    if args.wandb:
+        wandb.init(
+            entity="pinlab-sapienza",
+            project="CPHNN",
+            group=args.dataset,
+            name=args.exp_name,
+            config=args,
+        )
 
     main(args)
