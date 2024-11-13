@@ -301,16 +301,19 @@ def select_dataset(args, validation_split=False):
         raise "Selected dataset '{}' not available.".format(args.dataset)
 
     # Dataloader
+    batch_size = args.batch_size // len(args.gpus)
+    batch_size_test = args.batch_size_test // len(args.gpus)
+
     train_loader = DataLoader(
         train_set,
-        batch_size=args.batch_size,
+        batch_size=batch_size,
         num_workers=8,
         pin_memory=True,
         shuffle=True,
     )
     test_loader = DataLoader(
         test_set,
-        batch_size=args.batch_size_test,
+        batch_size=batch_size_test,
         num_workers=8,
         pin_memory=True,
         shuffle=False,
@@ -319,7 +322,7 @@ def select_dataset(args, validation_split=False):
     if validation_split:
         val_loader = DataLoader(
             val_set,
-            batch_size=args.batch_size_test,
+            batch_size=batch_size_test,
             num_workers=8,
             pin_memory=True,
             shuffle=False,

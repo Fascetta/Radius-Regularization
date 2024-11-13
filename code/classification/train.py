@@ -23,6 +23,7 @@ import numpy as np
 import torch
 import wandb
 from classification.losses.focal_loss import FocalLoss
+from classification.losses.radius_label_smoothing import RadiusLabelSmoothing
 from classification.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss
 from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.initialize import (
@@ -234,6 +235,11 @@ def get_arguments():
         type=float,
         help="Use radius confidence loss together with cross-entropy loss.",
     )
+    parser.add_argument(
+        "--radius_label_smoothing",
+        action="store_true",
+        help="Use radius-based label smoothing.",
+    )
 
     # Dataset settings
     parser.add_argument(
@@ -305,11 +311,16 @@ def main(args):
     rcl_alpha = args.radius_conf_loss
     radius_acc_loss = RadiusAccuracyLoss() if ral_alpha > 0.0 else None
     radius_conf_loss = RadiusConfidenceLoss(n_bins=15) if rcl_alpha > 0.0 else None
+    if args.radius_label_smoothing:
+        radius_label_smoothing = RadiusLabelSmoothing(device, n_classes=num_classes)
+    else:
+        radius_label_smoothing = None
     print(f"Using radius accuracy loss with alpha = {ral_alpha}")
     print(f"Using radius confidence loss with alpha = {rcl_alpha}")
+    print(f"Using radius label smoothing = {args.radius_label_smoothing}")
 
     use_radius_loss = False
-    if ral_alpha > 0.0 or rcl_alpha > 0.0:
+    if ral_alpha > 0.0 or rcl_alpha > 0.0 or radius_label_smoothing:
         use_radius_loss = True
 
     start_epoch = 0
@@ -349,14 +360,20 @@ def main(args):
                 if args.decoder_manifold == "euclidean":
                     radii = torch.norm(embeds, dim=-1)
                 else:
-                    radii = model.module.dec_manifold.dist0(embeds)
+                    # radii = model.module.dec_manifold.dist0(embeds)
+                    radii = torch.norm(embeds, dim=-1)
 
                 # update running max radius
                 # radius_running_max = max(radius_running_max, radii.max().item())
                 # rescale radii to be in [0, 1]
                 # radii = radii / radius_running_max
 
-                ce_loss = criterion(logits, y)
+                ce_y = y
+                if args.radius_label_smoothing:
+                    smoothed_y = radius_label_smoothing(y, radii)
+                    ce_y = smoothed_y
+                
+                ce_loss = criterion(logits, ce_y)
 
                 if ral_alpha > 0.0:
                     ral = radius_acc_loss(logits, y, radii) * ral_alpha
@@ -374,13 +391,13 @@ def main(args):
                 loss = ce_loss = criterion(logits, y)  # Compute loss
                 ral, rcl = torch.zeros_like(ce_loss), torch.zeros_like(ce_loss)
 
-            if ((batch_idx + 1) % accum_iter == 0) or (
-                batch_idx + 1 == len(train_loader)
-            ):
-                optimizer.zero_grad()
-                # loss.backward()
-                fabric.backward(loss)
-                optimizer.step()
+            # if ((batch_idx + 1) % accum_iter == 0) or (
+            #     batch_idx + 1 == len(train_loader)
+            # ):
+            optimizer.zero_grad()
+            # loss.backward()
+            fabric.backward(loss)
+            optimizer.step()
 
             with torch.no_grad():
                 top1, top5 = accuracy(logits, y, topk=(1, 5))
@@ -600,7 +617,8 @@ def evaluate(
         if manifold == "euclidean":
             radius = torch.norm(embeds, dim=-1)
         else:
-            radius = model.module.dec_manifold.dist0(embeds)
+            # radius = model.module.dec_manifold.dist0(embeds)
+            radius = torch.norm(embeds, dim=-1)
         radii.append(radius.cpu().numpy())
 
         logits = torch.nn.functional.softmax(logits, dim=-1)
@@ -645,7 +663,7 @@ if __name__ == "__main__":
         if not os.path.exists(args.output_dir):
             print("Create missing output directory...")
             os.mkdir(args.output_dir)
-    
+
     if args.wandb:
         wandb.init(
             entity="pinlab-sapienza",
