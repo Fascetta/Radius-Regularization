@@ -312,7 +312,7 @@ def main(args):
     radius_acc_loss = RadiusAccuracyLoss() if ral_alpha > 0.0 else None
     radius_conf_loss = RadiusConfidenceLoss(n_bins=15) if rcl_alpha > 0.0 else None
     if args.radius_label_smoothing:
-        radius_label_smoothing = RadiusLabelSmoothing(device, n_classes=num_classes)
+        radius_label_smoothing = RadiusLabelSmoothing(device, n_classes=num_classes, ema_alpha=0.99)
     else:
         radius_label_smoothing = None
     print(f"Using radius accuracy loss with alpha = {ral_alpha}")
@@ -353,15 +353,14 @@ def main(args):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
 
+            # if batch_idx == 3:
+            #     print("Breakpoint")
+
             if use_radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
 
-                if args.decoder_manifold == "euclidean":
-                    radii = torch.norm(embeds, dim=-1)
-                else:
-                    # radii = model.module.dec_manifold.dist0(embeds)
-                    radii = torch.norm(embeds, dim=-1)
+                radii = torch.norm(embeds, dim=-1)
 
                 # update running max radius
                 # radius_running_max = max(radius_running_max, radii.max().item())
@@ -390,6 +389,11 @@ def main(args):
                 logits = model(x)
                 loss = ce_loss = criterion(logits, y)  # Compute loss
                 ral, rcl = torch.zeros_like(ce_loss), torch.zeros_like(ce_loss)
+
+            # check if loss is nan and exit
+            if torch.isnan(loss).any():
+                print(f"NaN detected in loss. Skipping batch {batch_idx}.")
+                exit()
 
             # if ((batch_idx + 1) % accum_iter == 0) or (
             #     batch_idx + 1 == len(train_loader)
@@ -453,6 +457,10 @@ def main(args):
                     f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
                     f"\n"
                 )
+
+                print("EMA of radii per class:")
+                print(radius_label_smoothing.radii_ema.item())
+                print("\n")
 
             if args.wandb:
                 wandb.log(

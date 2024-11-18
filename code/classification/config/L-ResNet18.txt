@@ -1,10 +1,9 @@
 # Output settings
-exp_name = L-ResNet18_bs128_RAL02
+exp_name = L-ResNet18_RadiusLS_clip
 output_dir = classification/output
 
 # General settings
-device = cuda:0,cuda:1,cuda:6,cuda:7
-gpus = [0,1,6,7]
+gpus = [0]
 dtype = float32
 seed = 1
 
@@ -15,7 +14,7 @@ seed = 1
 
 # General training hyperparameters
 num_epochs = 200
-batch_size = 32
+batch_size = 128
 lr = 1e-1
 weight_decay = 5e-4
 optimizer = RiemannianSGD
@@ -24,11 +23,12 @@ lr_scheduler = MultiStepLR             # CosineAnnealingLR or MultiStepLR
 lr_scheduler_milestones = [60,120,160]
 lr_scheduler_gamma = 0.2
 base_loss = cross_entropy   # cross_entropy or focal_loss
-radius_acc_loss = 0.2
+radius_acc_loss = 0.
 radius_conf_loss = 0.
+radius_label_smoothing = True
 
 # General validation/testing hyperparameters
-batch_size_test = 32
+batch_size_test = 128
 validation_split = False
 
 # Model selection
@@ -41,9 +41,10 @@ decoder_manifold = lorentz
 # learn_k = True
 encoder_k = 1.0
 decoder_k = 1.0
+clip_features = 1.0
 
 # Dataset settings
-dataset = Tiny-ImageNet  # CIFAR-10 or CIFAR-100 or Tiny-ImageNet
+dataset = CIFAR-10  # CIFAR-10 or CIFAR-100 or Tiny-ImageNet
 
 # Logging
 wandb = True
