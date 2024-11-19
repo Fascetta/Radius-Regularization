@@ -459,7 +459,7 @@ def main(args):
                 )
 
                 print("EMA of radii per class:")
-                print(radius_label_smoothing.radii_ema.item())
+                print(radius_label_smoothing.radii_ema.tolist())
                 print("\n")
 
             if args.wandb:
