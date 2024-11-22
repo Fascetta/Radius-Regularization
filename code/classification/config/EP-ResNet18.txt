@@ -1,9 +1,9 @@
 # Output settings
-exp_name = EP-ResNet18-RadiusLabelSmoothing
+exp_name = EP-ResNet18
 output_dir = classification/output
 
 # General settings
-gpus = [1]
+gpus = [0,1,2,3]
 dtype = float32
 seed = 1
 
@@ -25,7 +25,7 @@ lr_scheduler_gamma = 0.2
 base_loss = cross_entropy               # cross_entropy or focal_loss
 radius_acc_loss = 0.
 radius_conf_loss = 0.
-radius_label_smoothing = True
+radius_label_smoothing = False
 
 # General validation/testing hyperparameters
 batch_size_test = 128
@@ -44,7 +44,7 @@ decoder_k = 1.0
 clip_features = 1.0
 
 # Dataset settings
-dataset = CIFAR-10 # CIFAR-10 or Tiny-ImageNet
+dataset = Tiny-ImageNet         # CIFAR-10 or Tiny-ImageNet
 
 # Logging
 wandb = True

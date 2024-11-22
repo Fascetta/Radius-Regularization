@@ -240,6 +240,12 @@ def get_arguments():
         action="store_true",
         help="Use radius-based label smoothing.",
     )
+    parser.add_argument(
+        "--ema_alpha",
+        default=0.1,
+        type=float,
+        help="Exponential moving average alpha for radius-based label smoothing.",
+    )
 
     # Dataset settings
     parser.add_argument(
@@ -271,32 +277,51 @@ def main(args):
     device = fabric.device
     fabric.launch()
 
+    if len(args.gpus) > 1:
+        master_process = fabric.global_rank == 0
+    else:
+        master_process = True
+
+    if args.output_dir and master_process:
+        if not os.path.exists(args.output_dir):
+            print("Create missing output directory...")
+            os.mkdir(args.output_dir)
+
+    if args.wandb and master_process:
+        wandb.init(
+            entity="pinlab-sapienza",
+            project="CPHNN",
+            group=args.dataset,
+            name=args.exp_name,
+            config=args,
+        )
+
     # device = args.device[0]
     torch.cuda.empty_cache()
 
-    print("Running experiment: " + args.exp_name)
-    print("Arguments:")
-    print(args)
+    fabric.print("Running experiment: " + args.exp_name)
+    fabric.print("Arguments:")
+    fabric.print(args)
 
-    print(f"Loading dataset with validation_split = {args.validation_split}...")
+    fabric.print(f"Loading dataset with validation_split = {args.validation_split}...")
     train_loader, val_loader, test_loader, img_dim, num_classes = select_dataset(
         args, validation_split=args.validation_split
     )
 
-    print("Creating model...")
+    fabric.print("Creating model...")
     model = select_model(img_dim, num_classes, args)
     model = model.to(device)
     # model = DataParallel(model, device_ids=args.device)
     num_params = sum(p.numel() for p in model.parameters())
     num_trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(
+    fabric.print(
         f"-> Number of model params: {num_params} (trainable: {num_trainable_params})"
     )
 
-    print("Creating optimizer...")
+    fabric.print("Creating optimizer...")
     optimizer, lr_scheduler = select_optimizer(model, args)
 
-    print("Setup Fabric")
+    fabric.print("Setup Fabric")
     model, optimizer = fabric.setup(model, optimizer)
     train_loader, val_loader, test_loader = fabric.setup_dataloaders(
         train_loader, val_loader, test_loader
@@ -308,29 +333,50 @@ def main(args):
         criterion = FocalLoss(gamma=2.0, reduction="mean")
 
     ral_alpha = args.radius_acc_loss
+    if ral_alpha > 0.0:
+        use_RAL = True
+        radius_acc_loss = RadiusAccuracyLoss()
+        # ral_alpha = torch.tensor(ral_alpha, device=device)
+        # ral_alpha = torch.nn.Parameter(ral_alpha, requires_grad=True)
+        # optimizer.add_param_group({"params": ral_alpha})
+    else:
+        use_RAL = False
+        radius_acc_loss = None
+
     rcl_alpha = args.radius_conf_loss
-    radius_acc_loss = RadiusAccuracyLoss() if ral_alpha > 0.0 else None
-    radius_conf_loss = RadiusConfidenceLoss(n_bins=15) if rcl_alpha > 0.0 else None
+    if rcl_alpha > 0.0:
+        use_RCL = True
+        radius_conf_loss = RadiusConfidenceLoss(n_bins=15)
+    else:
+        use_RCL = False
+        radius_conf_loss = None
+
     if args.radius_label_smoothing:
-        radius_label_smoothing = RadiusLabelSmoothing(device, n_classes=num_classes, ema_alpha=0.99)
+        radius_label_smoothing = RadiusLabelSmoothing(
+            device,
+            n_classes=num_classes,
+            ema_alpha=args.ema_alpha,
+            manifold=args.decoder_manifold,
+        )
     else:
         radius_label_smoothing = None
-    print(f"Using radius accuracy loss with alpha = {ral_alpha}")
-    print(f"Using radius confidence loss with alpha = {rcl_alpha}")
-    print(f"Using radius label smoothing = {args.radius_label_smoothing}")
+    fabric.print(f"Using radius accuracy loss with alpha = {ral_alpha}")
+    fabric.print(f"Using radius confidence loss with alpha = {rcl_alpha}")
+    fabric.print(f"Using radius label smoothing = {args.radius_label_smoothing}")
 
-    use_radius_loss = False
-    if ral_alpha > 0.0 or rcl_alpha > 0.0 or radius_label_smoothing:
+    if use_RAL or use_RCL or radius_label_smoothing:
         use_radius_loss = True
+    else:
+        use_radius_loss = False
 
     start_epoch = 0
     if args.load_checkpoint:
-        print(f"Loading model checkpoint from {args.load_checkpoint}")
+        fabric.print(f"Loading model checkpoint from {args.load_checkpoint}")
         model, optimizer, lr_scheduler, start_epoch = load_checkpoint(
             model, optimizer, lr_scheduler, args
         )
 
-    print("Training...")
+    fabric.print("Training...")
     global_step = start_epoch * len(train_loader)
 
     best_acc = 0.0
@@ -371,15 +417,15 @@ def main(args):
                 if args.radius_label_smoothing:
                     smoothed_y = radius_label_smoothing(y, radii)
                     ce_y = smoothed_y
-                
+
                 ce_loss = criterion(logits, ce_y)
 
-                if ral_alpha > 0.0:
+                if use_RAL:
                     ral = radius_acc_loss(logits, y, radii) * ral_alpha
                 else:
                     ral = torch.zeros_like(ce_loss)
 
-                if rcl_alpha > 0.0:
+                if use_RCL:
                     rcl = radius_conf_loss(logits, y, radii) * rcl_alpha
                 else:
                     rcl = torch.zeros_like(ce_loss)
@@ -424,7 +470,7 @@ def main(args):
                     optimizer.param_groups[1]["lr"] *= (
                         1 / args.lr_scheduler_gamma
                     )  # Manifold params
-                    print("Skipped lr drop for manifold parameters")
+                    fabric.print("Skipped lr drop for manifold parameters")
 
                 lr_scheduler.step()
 
@@ -438,7 +484,7 @@ def main(args):
             )
 
             if not use_radius_loss:
-                print(
+                fabric.print(
                     f"Epoch {epoch + 1}/{args.num_epochs}: "
                     f"Loss={losses.avg:.4f}, "
                     f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
@@ -447,7 +493,7 @@ def main(args):
                     f"\n"
                 )
             else:
-                print(
+                fabric.print(
                     f"Epoch {epoch + 1}/{args.num_epochs}: "
                     f"Loss={losses.avg:.4f} "
                     f"RadiusAccLoss={radius_acc_losses.avg:.4f}, "
@@ -458,11 +504,12 @@ def main(args):
                     f"\n"
                 )
 
-                print("EMA of radii per class:")
-                print(radius_label_smoothing.radii_ema.tolist())
-                print("\n")
+            # if args.radius_label_smoothing:
+            #     print("EMA of radii per class:")
+            #     print(radius_label_smoothing.radii_ema.tolist())
+            #     print("\n")
 
-            if args.wandb:
+            if args.wandb and master_process:
                 wandb.log(
                     {
                         "epoch": epoch,
@@ -482,26 +529,13 @@ def main(args):
                     }
                 )
 
+                # if use_RAL:
+                #     wandb.log({"train/ral_alpha": ral_alpha})
+
             # Testing for best model
             if acc1_val > best_acc:
                 best_acc = acc1_val
                 best_epoch = epoch + 1
-                if args.output_dir is not None:
-                    save_path = args.output_dir + "/best_" + args.exp_name + ".pth"
-                    torch.save(
-                        {
-                            "model": model.module.state_dict(),
-                            "optimizer": optimizer.state_dict(),
-                            "lr_scheduler": (
-                                lr_scheduler.state_dict()
-                                if lr_scheduler is not None
-                                else None
-                            ),
-                            "epoch": epoch,
-                            "args": args,
-                        },
-                        save_path,
-                    )
                 if args.output_dir:
                     save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
                     torch.save(
@@ -518,10 +552,10 @@ def main(args):
                     )
         # ------- End validation and logging -------
 
-    print("-----------------\nTraining finished\n-----------------")
-    print("Best epoch = {}, with Acc@1={:.4f}".format(best_epoch, best_acc))
+    fabric.print("-----------------\nTraining finished\n-----------------")
+    fabric.print("Best epoch = {}, with Acc@1={:.4f}".format(best_epoch, best_acc))
 
-    if args.output_dir:
+    if args.output_dir and master_process:
         save_path = f"{args.output_dir}/final_{args.exp_name}.pth"
         torch.save(
             {
@@ -533,33 +567,12 @@ def main(args):
             },
             save_path,
         )
-        print(f"Model saved to {save_path}")
+        fabric.print(f"Model saved to {save_path}")
     else:
-        print("Model not saved.")
+        fabric.print("Model not saved.")
 
-    print("Testing final model...")
-    loss_test, acc1_test, acc5_test, cm = evaluate(
-        model,
-        test_loader,
-        criterion,
-        device,
-        num_classes,
-        manifold=args.decoder_manifold,
-    )
-
-    print(
-        "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
-            loss_test, acc1_test, acc5_test
-        )
-    )
-
-    print("Testing best model...")
-    if args.output_dir:
-        print("Loading best model...")
-        save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
-        checkpoint = torch.load(save_path, map_location=device)
-        model.module.load_state_dict(checkpoint["model"], strict=True)
-
+    if master_process:
+        print("Testing final model...")
         loss_test, acc1_test, acc5_test, cm = evaluate(
             model,
             test_loader,
@@ -570,22 +583,44 @@ def main(args):
         )
 
         print(
-            f"Results: Loss={loss_test:.4f}, Acc@1={acc1_test:.4f}, Acc@5={acc5_test:.4f}"
+            "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+                loss_test, acc1_test, acc5_test
+            )
         )
 
-        if args.wandb:
-            wandb.log(
-                {
-                    "test/loss": loss_test,
-                    "test/acc1": acc1_test,
-                    "test/acc5": acc5_test,
-                    "mce": cm["mce"],
-                    "ece": cm["ece"],
-                    "rmsce": cm["rmsce"],
-                }
+        print("Testing best model...")
+        if args.output_dir:
+            print("Loading best model...")
+            save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
+            checkpoint = torch.load(save_path, map_location=device)
+            model.module.load_state_dict(checkpoint["model"], strict=True)
+
+            loss_test, acc1_test, acc5_test, cm = evaluate(
+                model,
+                test_loader,
+                criterion,
+                device,
+                num_classes,
+                manifold=args.decoder_manifold,
             )
-    else:
-        print("Best model not saved, because no output_dir given.")
+
+            print(
+                f"Results: Loss={loss_test:.4f}, Acc@1={acc1_test:.4f}, Acc@5={acc5_test:.4f}"
+            )
+
+            if args.wandb and master_process:
+                wandb.log(
+                    {
+                        "test/loss": loss_test,
+                        "test/acc1": acc1_test,
+                        "test/acc5": acc5_test,
+                        "mce": cm["mce"],
+                        "ece": cm["ece"],
+                        "rmsce": cm["rmsce"],
+                    }
+                )
+        else:
+            print("Best model not saved, because no output_dir given.")
 
 
 @torch.no_grad()
@@ -666,19 +701,5 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
-
-    if args.output_dir:
-        if not os.path.exists(args.output_dir):
-            print("Create missing output directory...")
-            os.mkdir(args.output_dir)
-
-    if args.wandb:
-        wandb.init(
-            entity="pinlab-sapienza",
-            project="CPHNN",
-            group=args.dataset,
-            name=args.exp_name,
-            config=args,
-        )
 
     main(args)
