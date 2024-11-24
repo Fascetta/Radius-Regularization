@@ -1,9 +1,11 @@
 # Output settings
-exp_name = EP-ResNet18
+exp_name = EP-ResNet18_RAL-increment-ep30
+notes = "Increment RAL alpha linearly throughout the training starting from 0.001 to 0.1 up to epoch 30"
+
 output_dir = classification/output
 
 # General settings
-gpus = [0,1,2,3]
+gpus = [1,4,5,6]
 dtype = float32
 seed = 1
 
@@ -23,7 +25,8 @@ lr_scheduler = MultiStepLR             # CosineAnnealingLR or MultiStepLR
 lr_scheduler_milestones = [60,120,160]
 lr_scheduler_gamma = 0.2
 base_loss = cross_entropy               # cross_entropy or focal_loss
-radius_acc_loss = 0.
+ral_initial_alpha = 0.001
+ral_final_alpha = 0.1
 radius_conf_loss = 0.
 radius_label_smoothing = False
 

@@ -224,7 +224,13 @@ def get_arguments():
         help="Clipping parameter for hybrid HNNs proposed by Guo et al. (2022)",
     )
     parser.add_argument(
-        "--radius_acc_loss",
+        "--ral_initial_alpha",
+        default=0.0,
+        type=float,
+        help="Use radius accuracy loss together with cross-entropy loss.",
+    )
+    parser.add_argument(
+        "--ral_final_alpha",
         default=0.0,
         type=float,
         help="Use radius accuracy loss together with cross-entropy loss.",
@@ -262,6 +268,9 @@ def get_arguments():
         action="store_true",
         help="Use Weights & Biases for logging.",
     )
+    parser.add_argument(
+        "--notes", default="", type=str, help="Additional notes for the experiment."
+    )
 
     parsed_args = parser.parse_args()
 
@@ -294,6 +303,7 @@ def main(args):
             group=args.dataset,
             name=args.exp_name,
             config=args,
+            notes=args.notes,
         )
 
     # device = args.device[0]
@@ -332,13 +342,13 @@ def main(args):
     elif args.base_loss == "focal":
         criterion = FocalLoss(gamma=2.0, reduction="mean")
 
-    ral_alpha = args.radius_acc_loss
-    if ral_alpha > 0.0:
+    if args.ral_initial_alpha > 0.0 or args.ral_final_alpha > 0.0:
         use_RAL = True
         radius_acc_loss = RadiusAccuracyLoss()
-        # ral_alpha = torch.tensor(ral_alpha, device=device)
-        # ral_alpha = torch.nn.Parameter(ral_alpha, requires_grad=True)
-        # optimizer.add_param_group({"params": ral_alpha})
+        ral_initial_alpha = args.ral_initial_alpha
+        ral_alpha = ral_initial_alpha
+        ral_final_alpha = args.ral_final_alpha
+        final_epoch = 30
     else:
         use_RAL = False
         radius_acc_loss = None
@@ -382,9 +392,6 @@ def main(args):
     best_acc = 0.0
     best_epoch = 0
 
-    # batch accumulation parameter
-    accum_iter = 1
-
     for epoch in range(start_epoch, args.num_epochs):
         model.train()
         losses = AverageMeter("Loss", ":.4e")
@@ -393,25 +400,17 @@ def main(args):
         ce_losses = AverageMeter("CELoss", ":.4e")
         acc1 = AverageMeter("Acc@1", ":6.2f")
         acc5 = AverageMeter("Acc@5", ":6.2f")
-        # radius_running_max = 0.0
 
-        for batch_idx, (x, y) in tqdm(enumerate(train_loader)):
+        for batch_idx, (x, y) in tqdm(
+            enumerate(train_loader), total=len(train_loader), disable=not master_process
+        ):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
-
-            # if batch_idx == 3:
-            #     print("Breakpoint")
 
             if use_radius_loss:
                 embeds = model.module.embed(x)
                 logits = model.module.decoder(embeds)
-
                 radii = torch.norm(embeds, dim=-1)
-
-                # update running max radius
-                # radius_running_max = max(radius_running_max, radii.max().item())
-                # rescale radii to be in [0, 1]
-                # radii = radii / radius_running_max
 
                 ce_y = y
                 if args.radius_label_smoothing:
@@ -421,6 +420,11 @@ def main(args):
                 ce_loss = criterion(logits, ce_y)
 
                 if use_RAL:
+                    if ral_initial_alpha != ral_final_alpha:
+                        # Compute decayed/increased alpha
+                        diff = ral_initial_alpha - ral_final_alpha
+                        curr_epoch = min(epoch, final_epoch)
+                        ral_alpha = ral_initial_alpha - (curr_epoch / final_epoch) * diff
                     ral = radius_acc_loss(logits, y, radii) * ral_alpha
                 else:
                     ral = torch.zeros_like(ce_loss)
@@ -441,9 +445,6 @@ def main(args):
                 print(f"NaN detected in loss. Skipping batch {batch_idx}.")
                 exit()
 
-            # if ((batch_idx + 1) % accum_iter == 0) or (
-            #     batch_idx + 1 == len(train_loader)
-            # ):
             optimizer.zero_grad()
             # loss.backward()
             fabric.backward(loss)
@@ -481,28 +482,19 @@ def main(args):
                 device,
                 num_classes,
                 manifold=args.decoder_manifold,
+                fabric=fabric,
             )
 
-            if not use_radius_loss:
-                fabric.print(
-                    f"Epoch {epoch + 1}/{args.num_epochs}: "
-                    f"Loss={losses.avg:.4f}, "
-                    f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
-                    f"Validation: Loss={loss_val:.4f}, "
-                    f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
-                    f"\n"
-                )
-            else:
-                fabric.print(
-                    f"Epoch {epoch + 1}/{args.num_epochs}: "
-                    f"Loss={losses.avg:.4f} "
-                    f"RadiusAccLoss={radius_acc_losses.avg:.4f}, "
-                    f"RadiusConfLoss={radius_conf_losses.avg:.4f}, "
-                    f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
-                    f"Validation: Loss={loss_val:.4f}, "
-                    f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
-                    f"\n"
-                )
+            log_string = f"Epoch {epoch + 1}/{args.num_epochs}: "
+            log_string += f"Loss={losses.avg:.4f}, "
+            if use_RAL:
+                log_string += f"RadiusAccLoss={radius_acc_losses.avg:.4f}, "
+            if use_RCL:
+                log_string += f"RadiusConfLoss={radius_conf_losses.avg:.4f}, "
+            log_string += f"Acc@1={acc1.avg:.4f}, Acc@5={acc5.avg:.4f}, "
+            log_string += f"Validation: Loss={loss_val:.4f}, "
+            log_string += f"Acc@1={acc1_val:.4f}, Acc@5={acc5_val:.4f}"
+            fabric.print(log_string)
 
             # if args.radius_label_smoothing:
             #     print("EMA of radii per class:")
@@ -510,33 +502,31 @@ def main(args):
             #     print("\n")
 
             if args.wandb and master_process:
-                wandb.log(
-                    {
-                        "epoch": epoch,
-                        "lr": optimizer.param_groups[0]["lr"],
-                        "train/loss": losses.avg,
-                        "train/ce_loss": ce_losses.avg,
-                        "train/radius_acc_loss": radius_acc_losses.avg,
-                        "train/radius_conf_loss": radius_conf_losses.avg,
-                        "train/acc1": acc1.avg,
-                        "train/acc5": acc5.avg,
-                        "mce": cm["mce"],
-                        "ece": cm["ece"],
-                        "rmsce": cm["rmsce"],
-                        "val/loss": loss_val,
-                        "val/acc1": acc1_val,
-                        "val/acc5": acc5_val,
-                    }
-                )
-
-                # if use_RAL:
-                #     wandb.log({"train/ral_alpha": ral_alpha})
+                log_dict = {
+                    "epoch": epoch,
+                    "lr": optimizer.param_groups[0]["lr"],
+                    "train/loss": losses.avg,
+                    "train/ce_loss": ce_losses.avg,
+                    "train/radius_acc_loss": radius_acc_losses.avg,
+                    "train/radius_conf_loss": radius_conf_losses.avg,
+                    "train/acc1": acc1.avg,
+                    "train/acc5": acc5.avg,
+                    "mce": cm["mce"],
+                    "ece": cm["ece"],
+                    "rmsce": cm["rmsce"],
+                    "val/loss": loss_val,
+                    "val/acc1": acc1_val,
+                    "val/acc5": acc5_val,
+                }
+                if use_RAL:
+                    log_dict["train/ral_alpha"] = ral_alpha
+                wandb.log(log_dict)
 
             # Testing for best model
             if acc1_val > best_acc:
                 best_acc = acc1_val
                 best_epoch = epoch + 1
-                if args.output_dir:
+                if args.output_dir and master_process:
                     save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
                     torch.save(
                         {
@@ -571,8 +561,30 @@ def main(args):
     else:
         fabric.print("Model not saved.")
 
-    if master_process:
-        print("Testing final model...")
+    print("Testing final model...")
+    loss_test, acc1_test, acc5_test, cm = evaluate(
+        model,
+        test_loader,
+        criterion,
+        device,
+        num_classes,
+        manifold=args.decoder_manifold,
+        fabric=fabric,
+    )
+
+    fabric.print(
+        "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
+            loss_test, acc1_test, acc5_test
+        )
+    )
+
+    fabric.print("Testing best model...")
+    if args.output_dir and master_process:
+        print("Loading best model...")
+        save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
+        checkpoint = torch.load(save_path, map_location=device)
+        model.module.load_state_dict(checkpoint["model"], strict=True)
+
         loss_test, acc1_test, acc5_test, cm = evaluate(
             model,
             test_loader,
@@ -580,47 +592,26 @@ def main(args):
             device,
             num_classes,
             manifold=args.decoder_manifold,
+            fabric=fabric,
         )
 
         print(
-            "Results: Loss={:.4f}, Acc@1={:.4f}, Acc@5={:.4f}".format(
-                loss_test, acc1_test, acc5_test
-            )
+            f"Results: Loss={loss_test:.4f}, Acc@1={acc1_test:.4f}, Acc@5={acc5_test:.4f}"
         )
 
-        print("Testing best model...")
-        if args.output_dir:
-            print("Loading best model...")
-            save_path = f"{args.output_dir}/best_{args.exp_name}.pth"
-            checkpoint = torch.load(save_path, map_location=device)
-            model.module.load_state_dict(checkpoint["model"], strict=True)
-
-            loss_test, acc1_test, acc5_test, cm = evaluate(
-                model,
-                test_loader,
-                criterion,
-                device,
-                num_classes,
-                manifold=args.decoder_manifold,
+        if args.wandb:
+            wandb.log(
+                {
+                    "test/loss": loss_test,
+                    "test/acc1": acc1_test,
+                    "test/acc5": acc5_test,
+                    "mce": cm["mce"],
+                    "ece": cm["ece"],
+                    "rmsce": cm["rmsce"],
+                }
             )
-
-            print(
-                f"Results: Loss={loss_test:.4f}, Acc@1={acc1_test:.4f}, Acc@5={acc5_test:.4f}"
-            )
-
-            if args.wandb and master_process:
-                wandb.log(
-                    {
-                        "test/loss": loss_test,
-                        "test/acc1": acc1_test,
-                        "test/acc5": acc5_test,
-                        "mce": cm["mce"],
-                        "ece": cm["ece"],
-                        "rmsce": cm["rmsce"],
-                    }
-                )
-        else:
-            print("Best model not saved, because no output_dir given.")
+    else:
+        fabric.print("Best model not saved, because no output_dir given.")
 
 
 @torch.no_grad()
@@ -633,6 +624,7 @@ def evaluate(
     calibration=None,
     tau=None,
     manifold="euclidean",
+    fabric=None,
 ):
     """Evaluates model performance"""
     model.eval()
@@ -675,14 +667,14 @@ def evaluate(
         cm.update(logits, y)
 
     calib_metrics = cm.compute()
-    print("\n===== Calibration metrics ===== \n")
+    fabric.print("\n===== Calibration metrics ===== \n")
     for k, v in calib_metrics.items():
-        print(f"{k.upper()}: {round(v, 4)}")
-    print("\n=============================== \n")
+        fabric.print(f"{k.upper()}: {round(v, 4)}")
+    fabric.print("\n=============================== \n")
 
     radii = np.concatenate(radii)
     avg_radius = np.mean(radii)
-    print(f"Average norm: {avg_radius}")
+    fabric.print(f"Average norm: {avg_radius}")
 
     return losses.avg, acc1.avg, acc5.avg, calib_metrics
 
