@@ -2,8 +2,8 @@ import argparse
 import os
 
 import torch
-from classification.configs import cfg
-from classification.models.classifier import ResNetClassifier
+from segmentation.models.classifier import SegformerClassifier
+from segmentation.configs import cfg
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
@@ -71,12 +71,10 @@ def select_model(img_dim, num_classes, args):
         "clip_r": args.clip_features,
     }
 
-    model = ResNetClassifier(
-        num_layers=args.num_layers,
+    model = SegformerClassifier(
         enc_type=args.encoder_manifold,
         dec_type=args.decoder_manifold,
-        enc_kwargs=enc_args,
-        dec_kwargs=dec_args,
+        num_classes=num_classes,
     )
 
     return model
@@ -181,104 +179,14 @@ def get_param_groups(model, lr_manifold, weight_decay_manifold):
 def select_dataset(args, validation_split=False):
     """Selects an available dataset and returns PyTorch dataloaders for training, validation and testing."""
 
-    if args.dataset == "MNIST":
+    if args.dataset == "Cityscapes":
+        root_dir = "segmentation/data/cityscapes/"
 
-        train_transform = transforms.Compose(
-            [transforms.ToTensor(), transforms.Resize((32, 32), antialias=None)]
-        )
-
-        test_transform = transforms.Compose(
-            [transforms.ToTensor(), transforms.Resize((32, 32), antialias=None)]
-        )
-
-        train_set = datasets.MNIST(
-            "data", train=True, download=True, transform=train_transform
-        )
-        if validation_split:
-            train_set, val_set = torch.utils.data.random_split(
-                train_set, [50000, 10000], generator=torch.Generator().manual_seed(1)
-            )
-        test_set = datasets.MNIST(
-            "data", train=False, download=True, transform=test_transform
-        )
-
-        img_dim = [1, 32, 32]
-        num_classes = 10
-
-    elif args.dataset == "CIFAR-10":
-        train_transform = transforms.Compose(
-            [
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.5074, 0.4867, 0.4411), (0.267, 0.256, 0.276)),
-            ]
-        )
-
-        test_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize((0.5074, 0.4867, 0.4411), (0.267, 0.256, 0.276)),
-            ]
-        )
-
-        train_set = datasets.CIFAR10(
-            "data", train=True, download=True, transform=train_transform
-        )
-        if validation_split:
-            train_set, val_set = torch.utils.data.random_split(
-                train_set, [40000, 10000], generator=torch.Generator().manual_seed(1)
-            )
-        test_set = datasets.CIFAR10(
-            "data", train=False, download=True, transform=test_transform
-        )
-
-        img_dim = [3, 32, 32]
-        num_classes = 10
-
-    elif args.dataset == "CIFAR-100":
-        train_transform = transforms.Compose(
-            [
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.5074, 0.4867, 0.4411), (0.267, 0.256, 0.276)),
-            ]
-        )
-
-        test_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-                transforms.Normalize((0.5074, 0.4867, 0.4411), (0.267, 0.256, 0.276)),
-            ]
-        )
-
-        train_set = datasets.CIFAR100(
-            "data", train=True, download=True, transform=train_transform
-        )
-        if validation_split:
-            train_set, val_set = torch.utils.data.random_split(
-                train_set, [40000, 10000], generator=torch.Generator().manual_seed(1)
-            )
-        test_set = datasets.CIFAR100(
-            "data", train=False, download=True, transform=test_transform
-        )
-
-        img_dim = [3, 32, 32]
-        num_classes = 100
-
-    elif args.dataset == "Tiny-ImageNet":
-        root_dir = "classification/data/tiny-imagenet-200/"
-        train_dir = root_dir + "train/images"
-        val_dir = root_dir + "val/images"
-        test_dir = (
-            root_dir + "val/images"
-        )  # TODO: No labels for test were given, so treat validation as test
+        w, h = 1280, 640
 
         train_transform = transforms.Compose(
             [
-                transforms.RandomCrop(64, padding=4),
-                transforms.RandomHorizontalFlip(),
+                transforms.Resize((h, w)),
                 transforms.ToTensor(),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
@@ -288,6 +196,7 @@ def select_dataset(args, validation_split=False):
 
         test_transform = transforms.Compose(
             [
+                transforms.Resize((h, w)),
                 transforms.ToTensor(),
                 transforms.Normalize(
                     mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
@@ -295,13 +204,18 @@ def select_dataset(args, validation_split=False):
             ]
         )
 
-        train_set = datasets.ImageFolder(train_dir, train_transform)
-        val_set = datasets.ImageFolder(val_dir, test_transform)
-        test_set = datasets.ImageFolder(test_dir, test_transform)
+        target_transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+            ]
+        )
 
-        img_dim = [3, 64, 64]
-        num_classes = 200
+        train_set = datasets.Cityscapes(root=root_dir, split="train", mode="fine", target_type="semantic", transform=train_transform, target_transform=target_transform)
+        val_set = datasets.Cityscapes(root=root_dir, split="val", mode="fine", target_type="semantic", transform=test_transform, target_transform=target_transform)
+        test_set = datasets.Cityscapes(root=root_dir, split="val", mode="fine", target_type="semantic", transform=test_transform, target_transform=target_transform)
 
+        img_dim = [3, h, w]
+        num_classes = 19
     else:
         raise "Selected dataset '{}' not available.".format(args.dataset)
 
@@ -368,7 +282,7 @@ def check_config(cfg):
     assert isinstance(cfg.ral_final_alpha, float) and cfg.ral_final_alpha >= 0
     assert isinstance(cfg.radius_conf_loss, float) and cfg.radius_conf_loss >= 0
     assert isinstance(cfg.radius_label_smoothing, bool)
-    assert isinstance(cfg.dataset, str) and cfg.dataset in ["MNIST", "CIFAR-10", "CIFAR-100", "Tiny-ImageNet", "Fashion-MNIST"]
+    assert isinstance(cfg.dataset, str) and cfg.dataset in ["Cityscapes"]
     assert isinstance(cfg.wandb, bool)
     assert isinstance(cfg.notes, str)
 
@@ -408,11 +322,11 @@ def get_config():
     cfg.merge_from_list(args.opts)
 
     # add dataset config
-    dataset_cfg_path = os.path.join("classification/configs/datasets", str(cfg.dataset).lower() + ".yaml")
+    dataset_cfg_path = os.path.join("segmentation/configs/datasets", str(cfg.dataset).lower() + ".yaml")
     cfg.merge_from_file(dataset_cfg_path)
 
     # add model config
-    model_cfg_path = os.path.join("classification/configs/models", str(cfg.model).lower() + ".yaml")
+    model_cfg_path = os.path.join("segmentation/configs/models", str(cfg.model).lower() + ".yaml")
     cfg.merge_from_file(model_cfg_path)
 
     cfg.output_dir = os.path.join(cfg.output_dir, str(cfg.dataset).lower())

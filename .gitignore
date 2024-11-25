@@ -18,3 +18,4 @@
 
 code/classification/output/
 wandb/
+code/segmentation/output/

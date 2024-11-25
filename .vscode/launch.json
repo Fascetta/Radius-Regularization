@@ -5,18 +5,27 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "train",
+            "name": "train_classification",
             "type": "debugpy",
             "request": "launch",
             "program": "code/classification/train.py",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "env": {
-                "CUDA_VISIBLE_DEVICES": "0",
-            },
             "args": [
                 "-c",
-                "classification/config/EP-ResNet18.txt"
+                "classification/configs/EP-ResNet18.yaml"
+            ]
+        },
+        {
+            "name": "train_segmentation",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "code/segmentation/train.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "-c",
+                "segmentation/configs/train.yaml"
             ]
         }
     ]
