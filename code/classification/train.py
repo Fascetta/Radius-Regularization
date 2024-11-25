@@ -258,7 +258,7 @@ def get_arguments():
         "--dataset",
         default="CIFAR-100",
         type=str,
-        choices=["MNIST", "CIFAR-10", "CIFAR-100", "Tiny-ImageNet"],
+        choices=["MNIST", "CIFAR-10", "CIFAR-100", "Tiny-ImageNet", "Fashion-MNIST"],
         help="Select a dataset.",
     )
 
@@ -348,8 +348,9 @@ def main(args):
         ral_initial_alpha = args.ral_initial_alpha
         ral_alpha = ral_initial_alpha
         ral_final_alpha = args.ral_final_alpha
-        final_epoch = 30
+        final_epoch = args.num_epochs
     else:
+        ral_alpha = 0.0
         use_RAL = False
         radius_acc_loss = None
 

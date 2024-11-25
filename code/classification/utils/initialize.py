@@ -127,7 +127,8 @@ def select_optimizer(model, args):
             )
         elif args.lr_scheduler == "CosineAnnealingLR":
             lr_scheduler = CosineAnnealingLR(
-                optimizer, T_max=args.num_epochs, # eta_min=args.r * 0.01
+                optimizer,
+                T_max=args.num_epochs,  # eta_min=args.r * 0.01
             )
         else:
             raise "Learning rate scheduler not found. Wrong lr_scheduler in configuration... -> " + args.lr_scheduler
@@ -297,6 +298,34 @@ def select_dataset(args, validation_split=False):
         img_dim = [3, 64, 64]
         num_classes = 200
 
+    elif args.dataset == "Fashion-MNIST":
+
+        train_transform = transforms.Compose(
+            [
+                transforms.RandomHorizontalFlip(),
+                transforms.RandomVerticalFlip(),
+                transforms.ToTensor(),
+                transforms.Resize((32, 32), antialias=None),
+            ]
+        )
+
+        test_transform = transforms.Compose(
+            [transforms.ToTensor(), transforms.Resize((32, 32), antialias=None)]
+        )
+
+        train_set = datasets.FashionMNIST(
+            "data", train=True, download=True, transform=train_transform
+        )
+        if validation_split:
+            train_set, val_set = torch.utils.data.random_split(
+                train_set, [50000, 10000], generator=torch.Generator().manual_seed(1)
+            )
+        test_set = datasets.FashionMNIST(
+            "data", train=False, download=True, transform=test_transform
+        )
+
+        img_dim = [1, 32, 32]
+        num_classes = 10
     else:
         raise "Selected dataset '{}' not available.".format(args.dataset)
 
