@@ -1,0 +1,14 @@
+# General training hyperparameters
+optimizer: RiemannianSGD
+
+# Model selection
+num_layers: 18
+embedding_dim: 512
+encoder_manifold: euclidean
+decoder_manifold: poincare
+
+# Manifold settings
+# learn_k: True
+encoder_k: 1.0
+decoder_k: 1.0
+clip_features: 1.0

@@ -1,0 +1,18 @@
+dataset: Fashion-MNIST
+
+# General training hyperparameters
+num_epochs: 60
+batch_size: 128
+lr: 1e-1
+weight_decay: 5e-4
+use_lr_scheduler: True
+lr_scheduler: MultiStepLR
+lr_scheduler_milestones: [40]
+lr_scheduler_gamma: 0.2
+base_loss: cross_entropy
+batch_size_test: 128
+validation_split: False
+
+# General validation/testing hyperparameters
+batch_size_test: 128
+validation_split: False

@@ -1,4 +1,8 @@
+import argparse
+import os
+
 import torch
+from classification.configs import cfg
 from classification.models.classifier import ResNetClassifier
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
@@ -360,3 +364,88 @@ def select_dataset(args, validation_split=False):
         val_loader = test_loader
 
     return train_loader, val_loader, test_loader, img_dim, num_classes
+
+
+def check_config(cfg):
+    assert isinstance(cfg.exp_name, str) and cfg.exp_name != ""
+    assert isinstance(cfg.output_dir, str) and cfg.output_dir != ""
+    assert isinstance(cfg.gpus, list) and len(cfg.gpus) >= 1
+    assert isinstance(cfg.dtype, str) and cfg.dtype in ["float32", "float64"]
+    assert isinstance(cfg.seed, int) and cfg.seed > 0
+    assert isinstance(cfg.load_checkpoint, (str, type(None)))
+    assert isinstance(cfg.num_epochs, int) and cfg.num_epochs > 0
+    assert isinstance(cfg.batch_size, int) and cfg.batch_size > 0
+    assert isinstance(cfg.lr, float) and cfg.lr > 0
+    assert isinstance(cfg.weight_decay, float) and cfg.weight_decay >= 0
+    assert isinstance(cfg.optimizer, str) and cfg.optimizer in ["RiemannianAdam", "RiemannianSGD", "Adam", "SGD", "AdamW"]
+    assert isinstance(cfg.use_lr_scheduler, bool)
+    assert isinstance(cfg.lr_scheduler, str) and cfg.lr_scheduler in ["MultiStepLR", "CosineAnnealingLR"]
+    assert isinstance(cfg.lr_scheduler_milestones, list) and all(isinstance(m, int) for m in cfg.lr_scheduler_milestones)
+    assert isinstance(cfg.lr_scheduler_gamma, float) and cfg.lr_scheduler_gamma > 0
+    assert isinstance(cfg.base_loss, str) and cfg.base_loss in ["cross_entropy", "focal"]
+    assert isinstance(cfg.batch_size_test, int) and cfg.batch_size_test > 0
+    assert isinstance(cfg.validation_split, bool)
+    assert isinstance(cfg.num_layers, int) and cfg.num_layers in [18, 50]
+    assert isinstance(cfg.embedding_dim, int) and cfg.embedding_dim > 0
+    assert isinstance(cfg.encoder_manifold, str) and cfg.encoder_manifold in ["euclidean", "lorentz"]
+    assert isinstance(cfg.decoder_manifold, str) and cfg.decoder_manifold in ["euclidean", "lorentz", "poincare"]
+    assert isinstance(cfg.encoder_k, float) and cfg.encoder_k > 0
+    assert isinstance(cfg.decoder_k, float) and cfg.decoder_k > 0
+    assert isinstance(cfg.clip_features, float) and cfg.clip_features > 0
+    assert isinstance(cfg.ral_initial_alpha, float) and cfg.ral_initial_alpha >= 0
+    assert isinstance(cfg.ral_final_alpha, float) and cfg.ral_final_alpha >= 0
+    assert isinstance(cfg.radius_conf_loss, float) and cfg.radius_conf_loss >= 0
+    assert isinstance(cfg.radius_label_smoothing, bool)
+    assert isinstance(cfg.dataset, str) and cfg.dataset in ["MNIST", "CIFAR-10", "CIFAR-100", "Tiny-ImageNet", "Fashion-MNIST"]
+    assert isinstance(cfg.wandb, bool)
+    assert isinstance(cfg.notes, str)
+
+
+def get_config():
+    parser = argparse.ArgumentParser(
+        description="Calibration of Hyperbolic Neural Networks"
+    )
+    parser.add_argument(
+        "-c",
+        "--config-file",
+        default="",
+        metavar="FILE",
+        help="path to config file",
+        type=str,
+    )
+    parser.add_argument(
+        "--proctitle",
+        type=str,
+        default="CPHNN",
+        help="allow a process to change its title",
+    )
+    parser.add_argument(
+        "opts",
+        help="Modify config options using the command-line",
+        default=None,
+        nargs=argparse.REMAINDER,
+    )
+
+    args = parser.parse_args()
+
+    if args.opts is not None and args.opts != []:
+        args.opts[-1] = args.opts[-1].strip("\r\n")
+
+    cfg.set_new_allowed(True)
+    cfg.merge_from_file(args.config_file)
+    cfg.merge_from_list(args.opts)
+
+    # add dataset config
+    dataset_cfg_path = os.path.join("classification/configs/datasets", str(cfg.dataset).lower() + ".yaml")
+    cfg.merge_from_file(dataset_cfg_path)
+
+    # add model config
+    model_cfg_path = os.path.join("classification/configs/models", str(cfg.model).lower() + ".yaml")
+    cfg.merge_from_file(model_cfg_path)
+
+    cfg.output_dir = os.path.join(cfg.output_dir, str(cfg.dataset).lower())
+    print("Saving to {}".format(cfg.output_dir))
+    check_config(cfg)
+    cfg.freeze()
+
+    return cfg

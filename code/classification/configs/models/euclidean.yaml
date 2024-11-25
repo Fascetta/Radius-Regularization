@@ -1,0 +1,8 @@
+# General training hyperparameters
+optimizer: SGD
+
+# Model selection
+num_layers: 18
+embedding_dim: 512
+encoder_manifold: euclidean
+decoder_manifold: euclidean

@@ -1,0 +1,20 @@
+# Output settings
+exp_name: EP-ResNet18_augmented_RAL
+notes: ""
+
+# General settings
+gpus: [1]
+seed: 1
+
+# General training hyperparameters
+ral_initial_alpha: 0.1
+ral_final_alpha: 0.1
+radius_conf_loss: 0.
+radius_label_smoothing: False
+
+# Training hyperparameters
+model: euclidean-poincare
+dataset: Fashion-MNIST
+
+# Logging
+wandb: True
