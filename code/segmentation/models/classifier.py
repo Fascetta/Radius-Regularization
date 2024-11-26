@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from transformers import SegformerModel
-from segmentation.models.segformer import SegformerDecodeHead
+from segmentation.models.segformer_head import SegformerDecodeHead
 
 
 class SegformerClassifier(nn.Module):
@@ -37,10 +37,12 @@ class SegformerClassifier(nn.Module):
         embeds = x.hidden_states if return_dict else x[1]
         return embeds
 
-    def forward(self, x):
-        input_size = x.shape[-2:]
+    def decode(self, x, size=None):
+        return self.decoder(x, size=size)
+
+    def forward(self, x, size=None):
         x = self.embed(x)
-        logits, hidden_states = self.decoder(x, size=input_size)
+        logits, hidden_states = self.decoder(x, size=size)
         return logits, hidden_states
 
         

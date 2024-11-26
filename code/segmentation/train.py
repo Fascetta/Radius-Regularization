@@ -21,13 +21,14 @@ import random
 import configargparse
 import numpy as np
 import torch
+import torch.nn.functional as F
 import wandb
-from lib.utils.utils import AverageMeter, accuracy
+from lib.utils.utils import AverageMeter
 from lightning.fabric import Fabric
 from segmentation.losses.focal_loss import FocalLoss
 from segmentation.losses.radius_label_smoothing import RadiusLabelSmoothing
 from segmentation.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss
-from segmentation.utils.calibration_metrics import CalibrationMetrics
+from segmentation.utils.metrics import CalibrationMetrics, intersectionAndUnionGPU
 from segmentation.utils.initialize import (
     get_config,
     load_checkpoint,
@@ -35,8 +36,6 @@ from segmentation.utils.initialize import (
     select_model,
     select_optimizer,
 )
-from segmentation.utils.miou import intersectionAndUnionGPU
-from torch.nn import DataParallel
 from tqdm import tqdm
 
 
@@ -97,7 +96,7 @@ def main(cfg):
     )
 
     if cfg.base_loss == "cross_entropy":
-        criterion = torch.nn.CrossEntropyLoss()
+        criterion = torch.nn.CrossEntropyLoss(ignore_index=255)
     elif cfg.base_loss == "focal":
         criterion = FocalLoss(gamma=2.0, reduction="mean")
 
@@ -164,10 +163,11 @@ def main(cfg):
         ):
             # ------- Start iteration -------
             x, y = x.to(device), y.to(device)
+            # y = y.unsqueeze(1)  # Add channel dimension
 
             if use_radius_loss:
-                logits, embeds = model.module(x)
-                radii = torch.norm(embeds, dim=-1)
+                logits, embeds = model(x, size=y.shape[-2:])
+                radii = torch.norm(embeds, dim=1)
 
                 ce_y = y
                 if cfg.radius_label_smoothing:
@@ -195,7 +195,7 @@ def main(cfg):
 
                 loss = ce_loss + ral + rcl
             else:
-                logits = model(x)
+                logits, _ = model(x, size=y.shape[-2:])
                 loss = ce_loss = criterion(logits, y)  # Compute loss
                 ral, rcl = torch.zeros_like(ce_loss), torch.zeros_like(ce_loss)
 
@@ -343,9 +343,7 @@ def main(cfg):
             fabric=fabric,
         )
 
-        print(
-            f"Results: Loss={loss_test:.4f}, mIoU={mIoU_test:.4f}"
-        )
+        print(f"Results: Loss={loss_test:.4f}, mIoU={mIoU_test:.4f}")
 
         if cfg.wandb:
             wandb.log(
@@ -391,15 +389,20 @@ def evaluate(
         if calibration == "radius" and tau:
             embeds = embeds / tau
 
-        logits = model.module.decoder(embeds)
+        logits, embeds = model.module.decode(embeds)
         if calibration == "confidence" and tau:
             logits = logits / tau
 
-        radius = torch.norm(embeds, dim=-1)
+        radius = torch.norm(embeds, dim=1)
         radii.append(radius.cpu().numpy())
 
-        logits = torch.nn.functional.softmax(logits, dim=-1)
+        if logits.shape[-2:] != y.shape[-2:]:
+            size = y.shape[-2:]
+            logits = F.interpolate(
+                logits, size=size, mode="bilinear", align_corners=True
+            )
 
+        logits = torch.nn.functional.softmax(logits, dim=1)
         loss = criterion(logits, y)
         losses.update(loss.item())
         cm.update(logits, y)

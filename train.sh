@@ -1,3 +1,3 @@
 #!/bin/bash
 
-python /home/pmandica/CPHNN/code/classification/train.py -c classification/configs/train.yaml
+python /home/pmandica/CPHNN/code/segmentation/train.py -c segmentation/configs/train.yaml

@@ -1,11 +1,14 @@
 import argparse
 import os
 
+import numpy as np
+import segmentation.utils.transform as my_transforms
 import torch
-from segmentation.models.classifier import SegformerClassifier
-from segmentation.configs import cfg
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
+from segmentation.configs import cfg
+from segmentation.models.classifier import SegformerClassifier
+from segmentation.utils.cityscapes import cityscapesDataSet
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -184,35 +187,35 @@ def select_dataset(args, validation_split=False):
 
         w, h = 1280, 640
 
-        train_transform = transforms.Compose(
+        train_transform = my_transforms.Compose(
             [
-                transforms.Resize((h, w)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                my_transforms.Resize((h, w)),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
                 ),
             ]
         )
 
-        test_transform = transforms.Compose(
+        test_transform = my_transforms.Compose(
             [
-                transforms.Resize((h, w)),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                my_transforms.Resize((h, w), resize_label=False),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
                 ),
             ]
         )
 
-        target_transform = transforms.Compose(
-            [
-                transforms.ToTensor(),
-            ]
+        train_set = cityscapesDataSet(
+            root_dir, split="train", transform=train_transform
         )
-
-        train_set = datasets.Cityscapes(root=root_dir, split="train", mode="fine", target_type="semantic", transform=train_transform, target_transform=target_transform)
-        val_set = datasets.Cityscapes(root=root_dir, split="val", mode="fine", target_type="semantic", transform=test_transform, target_transform=target_transform)
-        test_set = datasets.Cityscapes(root=root_dir, split="val", mode="fine", target_type="semantic", transform=test_transform, target_transform=target_transform)
+        val_set = cityscapesDataSet(root_dir, split="val", transform=test_transform)
+        test_set = cityscapesDataSet(root_dir, split="val", transform=test_transform)
 
         img_dim = [3, h, w]
         num_classes = 19
@@ -221,7 +224,8 @@ def select_dataset(args, validation_split=False):
 
     # Dataloader
     batch_size = args.batch_size // len(args.gpus)
-    batch_size_test = args.batch_size_test // len(args.gpus)
+    # batch_size_test = args.batch_size_test // len(args.gpus)
+    batch_size_test = 1
 
     train_loader = DataLoader(
         train_set,
@@ -263,18 +267,39 @@ def check_config(cfg):
     assert isinstance(cfg.batch_size, int) and cfg.batch_size > 0
     assert isinstance(cfg.lr, float) and cfg.lr > 0
     assert isinstance(cfg.weight_decay, float) and cfg.weight_decay >= 0
-    assert isinstance(cfg.optimizer, str) and cfg.optimizer in ["RiemannianAdam", "RiemannianSGD", "Adam", "SGD", "AdamW"]
+    assert isinstance(cfg.optimizer, str) and cfg.optimizer in [
+        "RiemannianAdam",
+        "RiemannianSGD",
+        "Adam",
+        "SGD",
+        "AdamW",
+    ]
     assert isinstance(cfg.use_lr_scheduler, bool)
-    assert isinstance(cfg.lr_scheduler, str) and cfg.lr_scheduler in ["MultiStepLR", "CosineAnnealingLR"]
-    assert isinstance(cfg.lr_scheduler_milestones, list) and all(isinstance(m, int) for m in cfg.lr_scheduler_milestones)
+    assert isinstance(cfg.lr_scheduler, str) and cfg.lr_scheduler in [
+        "MultiStepLR",
+        "CosineAnnealingLR",
+    ]
+    assert isinstance(cfg.lr_scheduler_milestones, list) and all(
+        isinstance(m, int) for m in cfg.lr_scheduler_milestones
+    )
     assert isinstance(cfg.lr_scheduler_gamma, float) and cfg.lr_scheduler_gamma > 0
-    assert isinstance(cfg.base_loss, str) and cfg.base_loss in ["cross_entropy", "focal"]
+    assert isinstance(cfg.base_loss, str) and cfg.base_loss in [
+        "cross_entropy",
+        "focal",
+    ]
     assert isinstance(cfg.batch_size_test, int) and cfg.batch_size_test > 0
     assert isinstance(cfg.validation_split, bool)
     assert isinstance(cfg.num_layers, int) and cfg.num_layers in [18, 50]
     assert isinstance(cfg.embedding_dim, int) and cfg.embedding_dim > 0
-    assert isinstance(cfg.encoder_manifold, str) and cfg.encoder_manifold in ["euclidean", "lorentz"]
-    assert isinstance(cfg.decoder_manifold, str) and cfg.decoder_manifold in ["euclidean", "lorentz", "poincare"]
+    assert isinstance(cfg.encoder_manifold, str) and cfg.encoder_manifold in [
+        "euclidean",
+        "lorentz",
+    ]
+    assert isinstance(cfg.decoder_manifold, str) and cfg.decoder_manifold in [
+        "euclidean",
+        "lorentz",
+        "poincare",
+    ]
     assert isinstance(cfg.encoder_k, float) and cfg.encoder_k > 0
     assert isinstance(cfg.decoder_k, float) and cfg.decoder_k > 0
     assert isinstance(cfg.clip_features, float) and cfg.clip_features > 0
@@ -318,16 +343,26 @@ def get_config():
         args.opts[-1] = args.opts[-1].strip("\r\n")
 
     cfg.set_new_allowed(True)
-    cfg.merge_from_file(args.config_file)
-    cfg.merge_from_list(args.opts)
+    
+    # open the default config file
+    temp_cfg = cfg.clone()
+    temp_cfg.merge_from_file(args.config_file)
 
-    # add dataset config
-    dataset_cfg_path = os.path.join("segmentation/configs/datasets", str(cfg.dataset).lower() + ".yaml")
+    # load dataset config
+    dataset_cfg_path = os.path.join(
+        "segmentation/configs/datasets", str(temp_cfg.dataset).lower() + ".yaml"
+    )
     cfg.merge_from_file(dataset_cfg_path)
 
-    # add model config
-    model_cfg_path = os.path.join("segmentation/configs/models", str(cfg.model).lower() + ".yaml")
+    # load model config
+    model_cfg_path = os.path.join(
+        "segmentation/configs/models", str(temp_cfg.model).lower() + ".yaml"
+    )
     cfg.merge_from_file(model_cfg_path)
+
+    # load custom config
+    cfg.merge_from_file(args.config_file)
+    cfg.merge_from_list(args.opts)
 
     cfg.output_dir = os.path.join(cfg.output_dir, str(cfg.dataset).lower())
     print("Saving to {}".format(cfg.output_dir))

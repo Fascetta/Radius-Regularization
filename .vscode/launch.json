@@ -20,7 +20,7 @@
             "name": "train_segmentation",
             "type": "debugpy",
             "request": "launch",
-            "program": "code/segmentation/train.py",
+            "program": "/home/pmandica/CPHNN/code/segmentation/train.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
