@@ -4,7 +4,7 @@ import math
 from torch import nn
 from transformers import SegformerPreTrainedModel, SegformerConfig
 
-from segmentation.models.hyperbolic_utils import HyperMapper, HyperMLR
+from models.hyperbolic_utils import HyperMapper, HyperMLR
 
 
 class SegformerMLP(nn.Module):

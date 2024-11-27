@@ -2,13 +2,13 @@ import argparse
 import os
 
 import numpy as np
-import segmentation.utils.transform as my_transforms
+import utils.transform as my_transforms
 import torch
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
-from segmentation.configs import cfg
-from segmentation.models.classifier import SegformerClassifier
-from segmentation.utils.cityscapes import cityscapesDataSet
+from configs import cfg
+from models.classifier import SegformerClassifier
+from utils.cityscapes import cityscapesDataSet
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -183,7 +183,7 @@ def select_dataset(args, validation_split=False):
     """Selects an available dataset and returns PyTorch dataloaders for training, validation and testing."""
 
     if args.dataset == "Cityscapes":
-        root_dir = "segmentation/data/cityscapes/"
+        root_dir = "code/segmentation/data/cityscapes/"
 
         w, h = 1280, 640
 
@@ -350,13 +350,13 @@ def get_config():
 
     # load dataset config
     dataset_cfg_path = os.path.join(
-        "segmentation/configs/datasets", str(temp_cfg.dataset).lower() + ".yaml"
+        "code/segmentation/configs/datasets", str(temp_cfg.dataset).lower() + ".yaml"
     )
     cfg.merge_from_file(dataset_cfg_path)
 
     # load model config
     model_cfg_path = os.path.join(
-        "segmentation/configs/models", str(temp_cfg.model).lower() + ".yaml"
+        "code/segmentation/configs/models", str(temp_cfg.model).lower() + ".yaml"
     )
     cfg.merge_from_file(model_cfg_path)
 

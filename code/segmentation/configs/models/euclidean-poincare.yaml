@@ -1,5 +1,5 @@
 # General training hyperparameters
-optimizer: RiemannianSGD
+optimizer: AdamW
 
 # Model selection
 num_layers: 18

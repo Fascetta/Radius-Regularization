@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from transformers import SegformerModel
-from segmentation.models.segformer_head import SegformerDecodeHead
+from models.segformer_head import SegformerDecodeHead
 
 
 class SegformerClassifier(nn.Module):
