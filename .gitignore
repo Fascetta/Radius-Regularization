@@ -19,3 +19,5 @@
 code/classification/output/
 wandb/
 code/segmentation/output/
+classification/output
+lightning_logs/
