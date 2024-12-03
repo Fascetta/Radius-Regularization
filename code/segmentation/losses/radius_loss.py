@@ -9,7 +9,7 @@ class RadiusAccuracyLoss:
     @staticmethod
     def compute_batch_accuracy_per_class(logits, labels):
         """Computes the estimated confidence for each class."""
-        n_classes = logits.shape[-1]
+        n_classes = logits.shape[1]
         accuracy = torch.zeros(n_classes, device=logits.device)
         preds = logits.argmax(dim=-1)
 

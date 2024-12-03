@@ -407,7 +407,7 @@ def evaluate(
         losses.update(loss.item())
         cm.update(logits, y)
 
-        intersection, union, _ = intersectionAndUnionGPU(logits, y)
+        intersection, union, _ = intersectionAndUnionGPU(logits, y, num_classes)
         miou = (intersection.item() / (union.item() + 1e-10)) * 100
         mIoU.update(miou)
 

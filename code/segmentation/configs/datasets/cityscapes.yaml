@@ -3,10 +3,10 @@ dataset: Cityscapes
 # General training hyperparameters
 num_epochs: 200
 batch_size: 2
-lr: 1e-1
-weight_decay: 5e-4
+lr: 6e-4
+weight_decay: 1e-2
 use_lr_scheduler: True
-lr_scheduler: MultiStepLR             # CosineAnnealingLR or MultiStepLR
+lr_scheduler: CosineAnnealingLR             # CosineAnnealingLR or MultiStepLR
 lr_scheduler_milestones: [60, 120, 160]
 lr_scheduler_gamma: 0.2
 base_loss: cross_entropy               # cross_entropy or focal_loss

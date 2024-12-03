@@ -8,12 +8,13 @@ _C = CN()
 _C.exp_name = "EP-ResNet18_RAL"
 _C.notes = ""
 
-_C.output_dir = "classification/output"
+_C.output_dir = "code/segmentation/output"
 
 # General settings
 _C.gpus = [1]
 _C.dtype = "float32"
 _C.seed = 1
+_C.debug = False
 
 # Test
 _C.load_checkpoint = None
