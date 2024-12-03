@@ -124,10 +124,16 @@ class SegformerDecodeHead(SegformerPreTrainedModel):
         if self.hyper:
             hidden_states = self.mapper.expmap(hidden_states, dim=1).double()
         logits = self.classifier(hidden_states).float()
+        radii = torch.norm(hidden_states, dim=1, keepdim=True)
 
         if size is not None:
             logits = F.interpolate(
                 logits, size=size, mode="bilinear", align_corners=True
             )
+            # breakpoint()
+            # hidden_states = F.interpolate(
+            #     hidden_states, size=size, mode="bilinear", align_corners=True
+            # )
+            radii = F.interpolate(radii, size=size, mode="bilinear", align_corners=True)
 
-        return logits, hidden_states
+        return logits, radii.squeeze(1)

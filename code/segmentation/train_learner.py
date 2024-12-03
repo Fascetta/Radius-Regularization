@@ -7,7 +7,7 @@ from losses.focal_loss import FocalLoss
 from losses.radius_loss import RadiusAccuracyLoss
 from torchmetrics import Accuracy
 from utils.initialize import select_dataset, select_model
-from utils.metrics import CalibrationMetrics, intersectionAndUnionGPU
+from utils.metrics import CalibrationMetrics, calculate_ece, intersectionAndUnionGPU
 
 
 class TrainLearner(pl.LightningModule):
@@ -53,8 +53,8 @@ class TrainLearner(pl.LightningModule):
         x, y = batch
 
         if self.use_RAL:
-            logits, embeds = self.forward(x, size=y.shape[-2:])
-            radii = torch.norm(embeds, dim=1)
+            logits, radii = self.forward(x, size=y.shape[-2:])
+            # radii = torch.norm(embeds, dim=1)
 
             if self.ral_initial_alpha != self.ral_final_alpha:
                 # Compute decayed/increased alpha
@@ -113,11 +113,7 @@ class TrainLearner(pl.LightningModule):
             output = output[0]
         return output.unsqueeze(0), logits
 
-    def on_validation_start(self):
-        self.radii = []
-        self.cm = CalibrationMetrics(n_classes=self.num_classes)
-
-    def validation_step(self, batch, batch_idx):
+    def validation_forward(self, batch):
         x, y = batch
         y = y.permute(0, 3, 1, 2).squeeze(1)
 
@@ -131,7 +127,33 @@ class TrainLearner(pl.LightningModule):
         miou = (intersection / (union + 1e-10)) * 100
         miou = miou.mean()
         loss = self.criterion(logits, y)
-        self.cm.update(logits, y)
+
+        # flatten the logits and labels
+        logits = (
+            logits.view(logits.shape[0], logits.shape[1], -1)
+            .permute(0, 2, 1)
+            .reshape(-1, logits.shape[1])
+        )
+        y = y.view(-1, 1)
+
+        # divide into batches of m pixels to avoid memory issues
+        m = 2**13
+        n_batches = logits.shape[0] // m
+        for j in range(n_batches):
+            logits_batch = logits[j * m : (j + 1) * m]
+            y_batch = y[j * m : (j + 1) * m]
+            ece_i = calculate_ece(logits_batch, y_batch, n_bins=15)
+            self.ece.append(ece_i)
+
+        return loss, miou
+
+    def on_validation_start(self):
+        self.radii = []
+        self.ece = []
+        # self.cm = CalibrationMetrics(n_classes=self.num_classes)
+
+    def validation_step(self, batch, batch_idx):
+        loss, miou = self.validation_forward(batch)
 
         self.log("val/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val/mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -139,41 +161,23 @@ class TrainLearner(pl.LightningModule):
         # for checkpoint saving
         self.log("val_mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
 
-        calib_metrics = self.cm.compute()
-        mce = calib_metrics["mce"]
-        ece = calib_metrics["ece"]
-        rmsce = calib_metrics["rmsce"]
-        self.log("val/mce", mce, on_epoch=True, sync_dist=True)
-        self.log("val/ece", ece, on_epoch=True, sync_dist=True)
-        self.log("val/rmsce", rmsce, on_epoch=True, sync_dist=True)
+    def on_validation_epoch_end(self):
+        ece = np.mean(self.ece)
+        self.log("val/ece", ece, on_epoch=True, sync_dist=True, prog_bar=True)
+        self.print(f"\nEpoch: {self.current_epoch}, ECE: {ece:.2f}\n")
 
     def on_test_start(self):
         self.on_validation_start()
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-
-        preds, logits = self.inference(x, y, flip=False)
-        output = preds.max(1)[1]
-
-        intersection, union, target = intersectionAndUnionGPU(
-            output, y, self.num_classes, ignore_index=255
-        )
-
-        miou = (intersection.item() / (union.item() + 1e-10)) * 100
-        loss = self.criterion(logits, y)
-        self.cm.update(logits, y)
+        loss, miou = self.validation_forward(batch)
 
         self.log("test/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("test/mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
 
-        calib_metrics = self.cm.compute()
-        mce = calib_metrics["mce"]
-        ece = calib_metrics["ece"]
-        rmsce = calib_metrics["rmsce"]
-        self.log("test/mce", mce, on_epoch=True, sync_dist=True)
-        self.log("test/ece", ece, on_epoch=True, sync_dist=True)
-        self.log("test/rmsce", rmsce, on_epoch=True, sync_dist=True)
+    def on_test_epoch_end(self):
+        ece = np.mean(self.ece)
+        self.log("test/ece", ece, on_epoch=True, sync_dist=True, prog_bar=True)
 
     def configure_optimizers(self):
         if self.cfg.optimizer == "Adam":

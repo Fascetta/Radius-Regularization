@@ -20,12 +20,12 @@
             "name": "train_segmentation",
             "type": "debugpy",
             "request": "launch",
-            "program": "/home/pmandica/CPHNN/code/segmentation/train.py",
+            "program": "/home/pmandica/CPHNN/code/segmentation/train_lt.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
                 "-c",
-                "segmentation/configs/train.yaml"
+                "code/segmentation/configs/train.yaml"
             ]
         }
     ]

@@ -48,6 +48,7 @@ def main(cfg):
         logger=logger,
         callbacks=[checkpoint_callback],
         precision=32 if cfg.dtype == "float32" else 64,
+        num_sanity_val_steps=2,
     )
 
     trainer.fit(model, train_loader, val_loader)

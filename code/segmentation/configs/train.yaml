@@ -3,13 +3,14 @@ exp_name: EP-Segformer
 notes: ""
 
 # General settings
-gpus: [4]
+gpus: [0,1,2,3,4,5]
 seed: 1
-batch_size: 1
+batch_size: 6
+debug: False
 
 # General training hyperparameters
-ral_initial_alpha: 0.1
-ral_final_alpha: 0.1
+ral_initial_alpha: 0.
+ral_final_alpha: 0.
 radius_conf_loss: 0.
 radius_label_smoothing: False
 
@@ -18,4 +19,4 @@ model: euclidean-poincare
 dataset: Cityscapes
 
 # Logging
-wandb: False
+wandb: True

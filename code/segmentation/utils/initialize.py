@@ -227,6 +227,12 @@ def select_dataset(args, validation_split=False):
     # batch_size_test = args.batch_size_test // len(args.gpus)
     batch_size_test = 1
 
+    # reduce train set size for faster training
+    if args.debug:
+        train_set = torch.utils.data.Subset(train_set, np.arange(0, 128))
+        val_set = torch.utils.data.Subset(val_set, np.arange(0, 32))
+        test_set = torch.utils.data.Subset(test_set, np.arange(0, 32))
+
     train_loader = DataLoader(
         train_set,
         batch_size=batch_size,
