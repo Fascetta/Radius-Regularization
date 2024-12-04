@@ -44,8 +44,8 @@ class CalibrationMetrics:
 
 def intersectionAndUnionGPU(output, target, K, ignore_index=255):
     # 'K' classes, output and target sizes are N or N * L or N * H * W, each value in range 0 to K - 1.
-    assert output.dim() in [1, 2, 3]
-    assert output.shape == target.shape
+    assert output.dim() in [1, 2, 3], f"output dim must be 1, 2 or 3, but got {output.dim()}"
+    assert output.shape == target.shape, f"output and target shapes do not match: {output.shape} != {target.shape}"
     output = output.view(-1)
     target = target.view(-1)
     output[target == ignore_index] = ignore_index

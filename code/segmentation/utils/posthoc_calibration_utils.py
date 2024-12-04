@@ -1,5 +1,6 @@
 import torch
 from scipy.optimize import minimize
+from tqdm import tqdm
 
 
 def get_optimal_radius_tau(model, val_loader, criterion, device):
@@ -36,7 +37,13 @@ def get_optimal_radius_tau(model, val_loader, criterion, device):
     return optimal_tau
 
 
-def get_optimal_confidence_tau(model, val_loader, criterion, device):
+def temperature_scaled_cross_entropy_loss(logits, labels, tau, criterion):
+    scaled_logits = logits / tau
+    loss = criterion(scaled_logits, labels)
+    return loss.item()
+
+
+def get_optimal_confidence_tau(model, val_loader, criterion):
 
     def scaled_cross_entropy_loss(logits, labels, tau):
         scaled_logits = logits / tau
@@ -44,12 +51,13 @@ def get_optimal_confidence_tau(model, val_loader, criterion, device):
         return loss.item()
 
     logits_list, labels_list = [], []
+    device = next(model.parameters()).device
 
-    for x, y in val_loader:
+    for x, y in tqdm(val_loader, total=len(val_loader)):
         x, y = x.to(device), y.to(device)
+        y = y.permute(0, 3, 1, 2).squeeze(1)
         with torch.no_grad():
-            embeds = model.module.embed(x)
-            logits = model.module.decoder(embeds)
+            logits, _ = model(x, size=y.shape[-2:])
         logits_list.append(logits.cpu())
         labels_list.append(y.cpu())
 

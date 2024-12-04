@@ -5,9 +5,9 @@ import torch.nn.functional as F
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
 from losses.focal_loss import FocalLoss
 from losses.radius_loss import RadiusAccuracyLoss
-from torchmetrics import Accuracy
 from utils.initialize import select_dataset, select_model
-from utils.metrics import CalibrationMetrics, calculate_ece, intersectionAndUnionGPU
+from utils.metrics import calculate_ece, intersectionAndUnionGPU
+from utils.posthoc_calibration_utils import get_optimal_confidence_tau
 
 
 class TrainLearner(pl.LightningModule):
@@ -39,12 +39,15 @@ class TrainLearner(pl.LightningModule):
             self.use_RAL = False
             self.radius_acc_loss = None
 
-        print(f"Using radius accuracy loss with alpha = {self.ral_alpha}")
+        # test_calibration is initally set to False for the first test run
+        # it will be overwritten to True for the second test run
+        self.test_calibration = False
+        self.ece_batch_size = 2**13
 
-        # evaluation metrics
-        # self.intersections = np.array([])
-        # self.unions = np.array([])
-        # self.targets = np.array([])
+    def on_fit_start(self):
+        self.print(f"Training for {self.cfg.num_epochs} epochs")
+        self.print(f"Using radius accuracy loss with alpha = {self.ral_alpha}")
+        self.print(f"Using {self.cfg.lr_scheduler} scheduler")
 
     def forward(self, x, size=None):
         return self.model(x, size=size)
@@ -54,7 +57,6 @@ class TrainLearner(pl.LightningModule):
 
         if self.use_RAL:
             logits, radii = self.forward(x, size=y.shape[-2:])
-            # radii = torch.norm(embeds, dim=1)
 
             if self.ral_initial_alpha != self.ral_final_alpha:
                 # Compute decayed/increased alpha
@@ -92,33 +94,26 @@ class TrainLearner(pl.LightningModule):
 
         return loss
 
-    def inference(
-        self,
-        image,
-        label,
-        flip=True,
-    ):
+    def inference(self, image, label):
         size = label.shape[-2:]
-        if flip:
-            image = torch.cat([image, torch.flip(image, [3])], 0)
+        logits, _ = self.forward(image, size=size)
+        logits = F.interpolate(logits, size=size, mode="bilinear", align_corners=True)
 
-        output, _ = self.forward(image, size=size)
-        output = F.interpolate(output, size=size, mode="bilinear", align_corners=True)
+        preds = F.softmax(logits, dim=1)
+        return preds, logits
 
-        logits = output
-        output = F.softmax(output, dim=1)
-        if flip:
-            output = (output[0] + output[1].flip(2)) / 2
-        else:
-            output = output[0]
-        return output.unsqueeze(0), logits
-
-    def validation_forward(self, batch):
+    def validation_forward(self, batch, tau=None):
         x, y = batch
         y = y.permute(0, 3, 1, 2).squeeze(1)
 
-        preds, logits = self.inference(x, y, flip=False)
+        size = y.shape[-2:]
+        logits, _ = self.forward(x, size=size)
+        logits = F.interpolate(logits, size=size, mode="bilinear", align_corners=True)
+        preds = F.softmax(logits, dim=1)
         output = preds.max(1)[1]
+
+        if tau is not None:
+            logits = logits / tau
 
         intersection, union, target = intersectionAndUnionGPU(
             output, y, self.num_classes, ignore_index=255
@@ -137,7 +132,7 @@ class TrainLearner(pl.LightningModule):
         y = y.view(-1, 1)
 
         # divide into batches of m pixels to avoid memory issues
-        m = 2**13
+        m = self.ece_batch_size
         n_batches = logits.shape[0] // m
         for j in range(n_batches):
             logits_batch = logits[j * m : (j + 1) * m]
@@ -150,7 +145,6 @@ class TrainLearner(pl.LightningModule):
     def on_validation_start(self):
         self.radii = []
         self.ece = []
-        # self.cm = CalibrationMetrics(n_classes=self.num_classes)
 
     def validation_step(self, batch, batch_idx):
         loss, miou = self.validation_forward(batch)
@@ -168,9 +162,18 @@ class TrainLearner(pl.LightningModule):
 
     def on_test_start(self):
         self.on_validation_start()
+        self.tau = None
+
+        if self.test_calibration:
+            # self.print("Computing optimal tau...")
+            # self.tau = get_optimal_confidence_tau(
+            #     self.model, self.trainer.test_dataloaders, self.criterion
+            # )
+            # self.print(f"Optimal tau: {self.tau}")
+            self.tau = 2.0
 
     def test_step(self, batch, batch_idx):
-        loss, miou = self.validation_forward(batch)
+        loss, miou = self.validation_forward(batch, tau=self.tau)
 
         self.log("test/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("test/mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
@@ -222,7 +225,6 @@ class TrainLearner(pl.LightningModule):
         lr_scheduler = None
         if self.cfg.use_lr_scheduler:
             scheduler_type = self.cfg.lr_scheduler
-            print(f"Using {scheduler_type} scheduler")
 
             if scheduler_type == "MultiStepLR":
                 lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(

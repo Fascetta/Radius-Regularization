@@ -17,13 +17,13 @@ _C.seed = 1
 _C.debug = False
 
 # Test
-_C.load_checkpoint = None
+_C.checkpoint_path = None
 _C.mode = None
 _C.calibration = None
 
 # General training hyperparameters
 _C.num_epochs = 200
-_C.batch_size = 128
+_C.train_batch_size = 128
 _C.lr = 1e-1
 _C.weight_decay = 5e-4
 _C.optimizer = "RiemannianSGD"
@@ -38,7 +38,7 @@ _C.radius_conf_loss = 0.
 _C.radius_label_smoothing = False
 
 # General validation/testing hyperparameters
-_C.batch_size_test = 128
+_C.test_batch_size = 32
 _C.validation_split = False
 
 # Model selection

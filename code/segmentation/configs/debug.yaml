@@ -1,16 +1,16 @@
 # Output settings
-exp_name: EP-Segformer-b4
+exp_name: debug
 notes: ""
 
 # General settings
-gpus: [0,1,2,3,4,5]
+gpus: [0]
 seed: 1
-train_batch_size: 6
-debug: False
+train_batch_size: 2
+debug: True
 
 # General training hyperparameters
-ral_initial_alpha: 0.
-ral_final_alpha: 0.
+ral_initial_alpha: 0.1
+ral_final_alpha: 0.1
 radius_conf_loss: 0.
 radius_label_smoothing: False
 
@@ -19,8 +19,8 @@ model: euclidean-poincare
 dataset: Cityscapes
 
 # Logging
-wandb: True
+wandb: False
 
 # Test
 # checkpoint_path: "code/segmentation/output/cityscapes/best_epoch-epoch=28_val_mIoU-val_mIoU=42.71.ckpt"
-test_batch_size: 6
+test_batch_size: 2

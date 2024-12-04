@@ -14,35 +14,6 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 
-def load_checkpoint(model, optimizer, lr_scheduler, args):
-    """Loads a checkpoint from file-system."""
-
-    checkpoint = torch.load(args.load_checkpoint, map_location="cpu")
-
-    model.load_state_dict(checkpoint["model"])
-
-    if "optimizer" in checkpoint:
-        if checkpoint["args"].optimizer == args.optimizer:
-            optimizer.load_state_dict(checkpoint["optimizer"])
-            for group in optimizer.param_groups:
-                group["lr"] = args.lr
-
-            if (lr_scheduler is not None) and ("lr_scheduler" in checkpoint):
-                lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
-        else:
-            print(
-                "Warning: Could not load optimizer and lr-scheduler state_dict. Different optimizer in configuration ({}) and checkpoint ({}).".format(
-                    args.optimizer, checkpoint["args"].optimizer
-                )
-            )
-
-    epoch = 0
-    if "epoch" in checkpoint:
-        epoch = checkpoint["epoch"] + 1
-
-    return model, optimizer, lr_scheduler, epoch
-
-
 def load_model_checkpoint(model, checkpoint_path):
     """Loads a checkpoint from file-system."""
     checkpoint = torch.load(checkpoint_path, map_location="cpu")
@@ -223,9 +194,8 @@ def select_dataset(args, validation_split=False):
         raise "Selected dataset '{}' not available.".format(args.dataset)
 
     # Dataloader
-    batch_size = args.batch_size // len(args.gpus)
-    # batch_size_test = args.batch_size_test // len(args.gpus)
-    batch_size_test = 1
+    train_bs = args.train_batch_size // len(args.gpus)
+    test_bs = args.test_batch_size // len(args.gpus)
 
     # reduce train set size for faster training
     if args.debug:
@@ -235,14 +205,14 @@ def select_dataset(args, validation_split=False):
 
     train_loader = DataLoader(
         train_set,
-        batch_size=batch_size,
+        batch_size=train_bs,
         num_workers=8,
         pin_memory=True,
         shuffle=True,
     )
     test_loader = DataLoader(
         test_set,
-        batch_size=batch_size_test,
+        batch_size=test_bs,
         num_workers=8,
         pin_memory=True,
         shuffle=False,
@@ -251,7 +221,7 @@ def select_dataset(args, validation_split=False):
     if validation_split:
         val_loader = DataLoader(
             val_set,
-            batch_size=batch_size_test,
+            batch_size=test_bs,
             num_workers=8,
             pin_memory=True,
             shuffle=False,
@@ -268,9 +238,9 @@ def check_config(cfg):
     assert isinstance(cfg.gpus, list) and len(cfg.gpus) >= 1
     assert isinstance(cfg.dtype, str) and cfg.dtype in ["float32", "float64"]
     assert isinstance(cfg.seed, int) and cfg.seed > 0
-    assert isinstance(cfg.load_checkpoint, (str, type(None)))
+    assert isinstance(cfg.checkpoint_path, (str, type(None)))
     assert isinstance(cfg.num_epochs, int) and cfg.num_epochs > 0
-    assert isinstance(cfg.batch_size, int) and cfg.batch_size > 0
+    assert isinstance(cfg.train_batch_size, int) and cfg.train_batch_size >= len(cfg.gpus)
     assert isinstance(cfg.lr, float) and cfg.lr > 0
     assert isinstance(cfg.weight_decay, float) and cfg.weight_decay >= 0
     assert isinstance(cfg.optimizer, str) and cfg.optimizer in [
@@ -293,7 +263,7 @@ def check_config(cfg):
         "cross_entropy",
         "focal",
     ]
-    assert isinstance(cfg.batch_size_test, int) and cfg.batch_size_test > 0
+    assert isinstance(cfg.test_batch_size, int) and cfg.test_batch_size >= len(cfg.gpus)
     assert isinstance(cfg.validation_split, bool)
     assert isinstance(cfg.num_layers, int) and cfg.num_layers in [18, 50]
     assert isinstance(cfg.embedding_dim, int) and cfg.embedding_dim > 0

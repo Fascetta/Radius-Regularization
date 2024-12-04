@@ -1,7 +1,7 @@
 dataset: Cityscapes
 
 # General training hyperparameters
-num_epochs: 200
+num_epochs: 40
 batch_size: 2
 lr: 6e-4
 weight_decay: 1e-2

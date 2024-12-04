@@ -18,10 +18,6 @@ def main(cfg):
 
     model = TrainLearner(cfg)
 
-    if cfg.load_checkpoint:
-        checkpoint = torch.load(cfg.load_checkpoint)
-        model.load_state_dict(checkpoint["model"])
-
     logger = None
     if cfg.wandb:
         logger = WandbLogger(
@@ -35,7 +31,7 @@ def main(cfg):
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.output_dir,
-        filename="best_epoch-{epoch}_val_mIoU-{val_mIoU:.2f}",
+        filename="{cfg.exp_name}_best_{epoch}_{val_mIoU:.2f}",
         save_top_k=1,
         monitor="val_mIoU",
         mode="max",
@@ -51,7 +47,7 @@ def main(cfg):
         num_sanity_val_steps=2,
     )
 
-    trainer.fit(model, train_loader, val_loader)
+    trainer.fit(model, train_loader, val_loader, ckpt_path=cfg.checkpoint_path)
 
     trainer.test(model, test_loader)
 
