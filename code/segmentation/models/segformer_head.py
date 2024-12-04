@@ -1,10 +1,10 @@
+import math
+
 import torch
 import torch.nn.functional as F
-import math
-from torch import nn
-from transformers import SegformerPreTrainedModel, SegformerConfig
-
 from models.hyperbolic_utils import HyperMapper, HyperMLR
+from torch import nn
+from transformers import SegformerConfig, SegformerPreTrainedModel
 
 
 class SegformerMLP(nn.Module):
@@ -124,7 +124,7 @@ class SegformerDecodeHead(SegformerPreTrainedModel):
         if self.hyper:
             hidden_states = self.mapper.expmap(hidden_states, dim=1).double()
         logits = self.classifier(hidden_states).float()
-        radii = torch.norm(hidden_states, dim=1, keepdim=True)
+        radii = torch.norm(hidden_states, dim=1, keepdim=True).float()
 
         if size is not None:
             logits = F.interpolate(
