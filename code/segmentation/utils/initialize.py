@@ -5,12 +5,15 @@ import numpy as np
 import torch
 import utils.transforms as my_transforms
 from configs import cfg
+from datasets.ade20k import ADE20KDataset
+from datasets.cityscapes import cityscapesDataSet
+from datasets.coco import COCOSegmentation
+from datasets.cocostuff import CocoStuff10k
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
 from models.classifier import SegformerClassifier
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 from torch.utils.data import DataLoader
-from utils.cityscapes import cityscapesDataSet
 
 
 def load_model_checkpoint(model, checkpoint_path):
@@ -153,9 +156,9 @@ def get_param_groups(model, lr_manifold, weight_decay_manifold):
 def select_dataset(args, validation_split=False):
     """Selects an available dataset and returns PyTorch dataloaders for training, validation and testing."""
 
-    if args.dataset == "Cityscapes":
-        root_dir = "code/segmentation/data/cityscapes/"
+    root_dir = args.data_root
 
+    if args.dataset == "cityscapes":
         w, h = 1280, 640
 
         train_transform = my_transforms.Compose(
@@ -288,6 +291,8 @@ def check_config(cfg):
     assert isinstance(cfg.dataset, str) and cfg.dataset in ["Cityscapes"]
     assert isinstance(cfg.wandb, bool)
     assert isinstance(cfg.notes, str)
+    assert isinstance(cfg.model_size, str)
+    assert isinstance(cfg.data_root, str)
 
 
 def get_config():

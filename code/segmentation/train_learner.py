@@ -111,7 +111,8 @@ class TrainLearner(pl.LightningModule):
 
     def validation_forward(self, batch, tau=None):
         x, y = batch
-        y = y.permute(0, 3, 1, 2).squeeze(1)
+        if len(y.shape) == 4:
+            y = y.permute(0, 3, 1, 2).squeeze(1)
 
         size = y.shape[-2:]
         logits, _ = self.forward(x, size=size)

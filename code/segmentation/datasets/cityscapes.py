@@ -2,21 +2,19 @@ import os
 
 import numpy as np
 from PIL import Image
-from torch.utils import data
+from torch.utils.data import Dataset
 
 
-class cityscapesDataSet(data.Dataset):
+class cityscapesDataSet(Dataset):
     def __init__(
         self,
         data_root,
         split="train",
         transform=None,
         ignore_label=255,
-        cfg=None,
     ):
         self.split = split
         self.data_root = data_root
-        self.cfg = cfg
 
         if self.split == "train":
             data_list = os.path.join(data_root, "cityscapes_train_list.txt")

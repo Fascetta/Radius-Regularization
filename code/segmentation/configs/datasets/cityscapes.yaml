@@ -1,4 +1,5 @@
-dataset: Cityscapes
+dataset: cityscapes
+data_root: code/segmentation/data/cityscapes/
 
 # General training hyperparameters
 num_epochs: 40

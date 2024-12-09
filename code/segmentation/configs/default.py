@@ -59,6 +59,7 @@ _C.model = "euclidean-poincare"
 
 # Dataset settings
 _C.dataset = "CIFAR-100"         # CIFAR-10 or Tiny-ImageNet
+_C.data_root = "data"
 
 # Logging
 _C.wandb = False

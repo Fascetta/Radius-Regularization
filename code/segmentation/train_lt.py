@@ -59,6 +59,12 @@ def main(cfg):
 
     trainer.fit(model, train_loader, val_loader, ckpt_path=cfg.checkpoint_path)
 
+    trainer = pl.Trainer(
+        accelerator="gpu",
+        devices=cfg.gpus[0],
+        logger=logger,
+        precision="16-mixed",
+    )
     trainer.test(model, test_loader)
 
 
