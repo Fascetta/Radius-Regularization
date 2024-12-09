@@ -193,6 +193,39 @@ def select_dataset(args, validation_split=False):
 
         img_dim = [3, h, w]
         num_classes = 19
+
+    elif args.dataset == "cocostuff10k":
+        crop_size = 512
+
+        train_set = CocoStuff10k(
+            root=root_dir,
+            split="train",
+            ignore_label=255,
+            mean_bgr=[104.008, 116.669, 122.675],
+            augment=True,
+            base_size=None,
+            crop_size=crop_size,
+            scales=[0.5, 0.75, 1.0, 1.25, 1.5],
+            flip=True,
+        )
+
+        val_set = CocoStuff10k(
+            root=root_dir,
+            split="test",
+            ignore_label=255,
+            mean_bgr=[104.008, 116.669, 122.675],
+            augment=False,
+            base_size=None,
+            crop_size=crop_size,
+            scales=(1.0,),
+            flip=False,
+        )
+
+        test_set = val_set
+
+        img_dim = [3, crop_size, crop_size]
+        num_classes = 182
+
     else:
         raise "Selected dataset '{}' not available.".format(args.dataset)
 
@@ -288,7 +321,10 @@ def check_config(cfg):
     assert isinstance(cfg.ral_final_alpha, float) and cfg.ral_final_alpha >= 0
     assert isinstance(cfg.radius_conf_loss, float) and cfg.radius_conf_loss >= 0
     assert isinstance(cfg.radius_label_smoothing, bool)
-    assert isinstance(cfg.dataset, str) and cfg.dataset in ["Cityscapes"]
+    assert isinstance(cfg.dataset, str) and cfg.dataset in [
+        "cityscapes",
+        "cocostuff10k",
+    ]
     assert isinstance(cfg.wandb, bool)
     assert isinstance(cfg.notes, str)
     assert isinstance(cfg.model_size, str)

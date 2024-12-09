@@ -3,20 +3,21 @@ exp_name: debug
 notes: ""
 
 # General settings
-gpus: [0]
+gpus: [6]
 seed: 1
 train_batch_size: 2
 debug: True
 
 # General training hyperparameters
-ral_initial_alpha: 0.1
-ral_final_alpha: 0.1
+ral_initial_alpha: 0.
+ral_final_alpha: 0.
 radius_conf_loss: 0.
 radius_label_smoothing: False
 
 # Training hyperparameters
 model: euclidean-poincare
-dataset: Cityscapes
+dataset: cocostuff10k
+model_size: b0
 
 # Logging
 wandb: False
