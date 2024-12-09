@@ -102,6 +102,13 @@ class TrainLearner(pl.LightningModule):
         preds = F.softmax(logits, dim=1)
         return preds, logits
 
+    def on_validation_start(self):
+        self.radii = []
+        self.ece = np.array([])
+        self.intersections = np.array([])
+        self.unions = np.array([])
+        self.targets = np.array([])
+
     def validation_forward(self, batch, tau=None):
         x, y = batch
         y = y.permute(0, 3, 1, 2).squeeze(1)
@@ -119,8 +126,19 @@ class TrainLearner(pl.LightningModule):
             output, y, self.num_classes, ignore_index=255
         )
 
-        miou = (intersection / (union + 1e-10)) * 100
-        miou = miou.mean()
+        intersection = np.expand_dims(intersection, axis=0)
+        union = np.expand_dims(union, axis=0)
+        target = np.expand_dims(target, axis=0)
+
+        if self.intersections.size == 0:
+            self.intersections = intersection
+            self.unions = union
+            self.targets = target
+        else:
+            self.intersections = np.concatenate((self.intersections, intersection), axis=0)
+            self.unions = np.concatenate((self.unions, union), axis=0)
+            self.targets = np.concatenate((self.targets, target), axis=0)
+
         loss = self.criterion(logits, y)
 
         # flatten the logits and labels
@@ -138,27 +156,50 @@ class TrainLearner(pl.LightningModule):
             logits_batch = logits[j * m : (j + 1) * m]
             y_batch = y[j * m : (j + 1) * m]
             ece_i = calculate_ece(logits_batch, y_batch, n_bins=15)
-            self.ece.append(ece_i)
+            self.ece = np.append(self.ece, ece_i)
 
-        return loss, miou
-
-    def on_validation_start(self):
-        self.radii = []
-        self.ece = []
+        return loss
 
     def validation_step(self, batch, batch_idx):
-        loss, miou = self.validation_forward(batch)
-
+        loss = self.validation_forward(batch)
         self.log("val/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("val/mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
 
-        # for checkpoint saving
-        self.log("val_mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
+    def validation_end(self):
+        # gather all the metrics across all the processes
+        intersections = self.all_gather(self.intersections)
+        unions = self.all_gather(self.unions)
+        targets = self.all_gather(self.targets)
+        eces = self.all_gather(self.ece)
+
+        intersections = intersections.flatten(0, 1)
+        unions = unions.flatten(0, 1)
+        targets = targets.flatten(0, 1)
+        eces = eces.flatten()
+
+        # calculate the final mean iou and accuracy
+        intersections = intersections.sum(axis=0)
+        unions = unions.sum(axis=0)
+        targets = targets.sum(axis=0)
+
+        iou_class = intersections / (unions + 1e-10)
+        accuracy_class = intersections / (targets + 1e-10)
+
+        mIoU = iou_class.mean() * 100
+        mAcc = accuracy_class.mean() * 100
+        aAcc = intersections.sum() / (targets.sum() + 1e-10) * 100
+
+        ece = eces.mean()
+
+        return mIoU, mAcc, aAcc, ece
 
     def on_validation_epoch_end(self):
-        ece = np.mean(self.ece)
+        mIoU, mAcc, aAcc, ece = self.validation_end()
         self.log("val/ece", ece, on_epoch=True, sync_dist=True, prog_bar=True)
+        self.log("val/mIoU", mIoU, on_epoch=True, sync_dist=True, prog_bar=True)
+        self.log("val/mAcc", mAcc, on_epoch=True, sync_dist=True, prog_bar=False)
+        self.log("val/aAcc", aAcc, on_epoch=True, sync_dist=True, prog_bar=False)
         self.print(f"\nEpoch: {self.current_epoch}, ECE: {ece:.2f}\n")
+        self.log("val_mIoU", mIoU, on_epoch=True, sync_dist=True, prog_bar=False)
 
     def on_test_start(self):
         self.on_validation_start()
@@ -173,14 +214,15 @@ class TrainLearner(pl.LightningModule):
             self.tau = 2.0
 
     def test_step(self, batch, batch_idx):
-        loss, miou = self.validation_forward(batch, tau=self.tau)
-
-        self.log("test/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
-        self.log("test/mIoU", miou, on_epoch=True, prog_bar=True, sync_dist=True)
+        loss = self.validation_forward(batch, tau=self.tau)
+        self.log("test/loss", loss, on_epoch=True, sync_dist=True)
 
     def on_test_epoch_end(self):
-        ece = np.mean(self.ece)
-        self.log("test/ece", ece, on_epoch=True, sync_dist=True, prog_bar=True)
+        mIoU, mAcc, aAcc, ece = self.validation_end()
+        self.log("test/ece", ece, on_epoch=True, sync_dist=True)
+        self.log("test/mIoU", mIoU, on_epoch=True, sync_dist=True)
+        # self.log("test/mAcc", mAcc, on_epoch=True, sync_dist=True)
+        # self.log("test/aAcc", aAcc, on_epoch=True, sync_dist=True)
 
     def configure_optimizers(self):
         if self.cfg.optimizer == "Adam":

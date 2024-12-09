@@ -12,13 +12,15 @@ class SegformerClassifier(nn.Module):
         enc_type: str = "euclidean",
         dec_type: str = "poincare",
         num_classes: int = 19,
+        model_size: str = "b5",
     ):
         super(SegformerClassifier, self).__init__()
 
         self.enc_type = enc_type
         self.dec_type = dec_type
+        self.model_size = model_size
 
-        self.encoder = SegformerModel.from_pretrained(f"nvidia/mit-b2")
+        self.encoder = SegformerModel.from_pretrained(f"nvidia/mit-{self.model_size}")
         self.encoder_config = self.encoder.config
 
         self.dec_manifold = None

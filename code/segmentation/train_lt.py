@@ -31,18 +31,28 @@ def main(cfg):
 
     checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.output_dir,
-        filename="{cfg.exp_name}_best_{epoch}_{val_mIoU:.2f}",
+        filename="best_{epoch}_{val_mIoU:.2f}",
         save_top_k=1,
         monitor="val_mIoU",
         mode="max",
     )
+
+    final_checkpoint_callback = ModelCheckpoint(
+        dirpath=cfg.output_dir,
+        filename="final_{epoch}_{val_mIoU:.2f}",
+        save_top_k=1,
+        monitor="epoch",
+        mode="max",
+    )
+
+    callbacks = [checkpoint_callback, final_checkpoint_callback]
 
     trainer = pl.Trainer(
         max_epochs=cfg.num_epochs,
         accelerator="gpu",
         devices=cfg.gpus,
         logger=logger,
-        callbacks=[checkpoint_callback],
+        callbacks=callbacks,
         precision=32 if cfg.dtype == "float32" else 64,
         num_sanity_val_steps=2,
     )

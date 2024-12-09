@@ -42,6 +42,7 @@ _C.test_batch_size = 32
 _C.validation_split = False
 
 # Model selection
+_C.model_size = "b2"
 _C.num_layers = 18
 _C.embedding_dim = 512
 _C.encoder_manifold = "euclidean"

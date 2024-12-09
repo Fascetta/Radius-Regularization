@@ -4,7 +4,6 @@ import numbers
 import collections
 from PIL import Image
 
-import torchvision
 from torchvision.transforms import functional as F
 import cv2
 from collections.abc import Sequence

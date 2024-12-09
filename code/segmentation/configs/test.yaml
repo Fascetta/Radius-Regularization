@@ -1,15 +1,16 @@
 # General settings
-gpus: [0]
+gpus: [6]
 seed: 1
 debug: False
 
 # Training hyperparameters
 model: euclidean-poincare
 dataset: Cityscapes
+model_size: b4
 
 # Logging
 wandb: False
 
 # Test
-checkpoint_path: "code/segmentation/output/cityscapes/EP-Segformer-b2_best_epoch=27_val_mIoU=41.52.ckpt"
+checkpoint_path: "code/segmentation/output/cityscapes/EP-Segformer-b4_best_epoch=28_val_mIoU=42.71.ckpt"
 test_batch_size: 6

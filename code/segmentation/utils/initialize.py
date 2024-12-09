@@ -2,16 +2,15 @@ import argparse
 import os
 
 import numpy as np
-import utils.transform as my_transforms
 import torch
+import utils.transforms as my_transforms
+from configs import cfg
 from lib.geoopt import ManifoldParameter
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
-from configs import cfg
 from models.classifier import SegformerClassifier
-from utils.cityscapes import cityscapesDataSet
 from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR
 from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
+from utils.cityscapes import cityscapesDataSet
 
 
 def load_model_checkpoint(model, checkpoint_path):
@@ -49,6 +48,7 @@ def select_model(img_dim, num_classes, args):
         enc_type=args.encoder_manifold,
         dec_type=args.decoder_manifold,
         num_classes=num_classes,
+        model_size=args.model_size,
     )
 
     return model
@@ -240,7 +240,9 @@ def check_config(cfg):
     assert isinstance(cfg.seed, int) and cfg.seed > 0
     assert isinstance(cfg.checkpoint_path, (str, type(None)))
     assert isinstance(cfg.num_epochs, int) and cfg.num_epochs > 0
-    assert isinstance(cfg.train_batch_size, int) and cfg.train_batch_size >= len(cfg.gpus)
+    assert isinstance(cfg.train_batch_size, int) and cfg.train_batch_size >= len(
+        cfg.gpus
+    )
     assert isinstance(cfg.lr, float) and cfg.lr > 0
     assert isinstance(cfg.weight_decay, float) and cfg.weight_decay >= 0
     assert isinstance(cfg.optimizer, str) and cfg.optimizer in [
@@ -319,7 +321,7 @@ def get_config():
         args.opts[-1] = args.opts[-1].strip("\r\n")
 
     cfg.set_new_allowed(True)
-    
+
     # open the default config file
     temp_cfg = cfg.clone()
     temp_cfg.merge_from_file(args.config_file)
@@ -340,7 +342,9 @@ def get_config():
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
 
-    cfg.output_dir = os.path.join(cfg.output_dir, str(cfg.dataset).lower())
+    cfg.output_dir = os.path.join(
+        cfg.output_dir, str(cfg.dataset).lower(), cfg.exp_name
+    )
     print("Saving to {}".format(cfg.output_dir))
     check_config(cfg)
     cfg.freeze()
