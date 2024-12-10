@@ -61,7 +61,7 @@ def main(cfg):
 
     trainer = pl.Trainer(
         accelerator="gpu",
-        devices=cfg.gpus[0],
+        devices=[cfg.gpus[0]],
         logger=logger,
         precision="16-mixed",
     )

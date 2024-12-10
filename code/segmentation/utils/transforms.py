@@ -1,4 +1,5 @@
 import random
+from typing import Tuple
 import numpy as np
 import numbers
 import collections
@@ -72,13 +73,15 @@ class Resize(object):
 class RandomScale(object):
     # Resize the input to the given size, 'size' is a 2-element tuple or list in the order of (h, w).
     def __init__(self, scale, size=None, resize_label=True):
-        assert (isinstance(scale, collections.Iterable) and len(scale) == 2)
+        assert isinstance(scale, collections.Iterable)
+        if size is not None:
+            assert isinstance(size, collections.Iterable) and len(size) == 2
         self.scale = scale
         self.size = size
         self.resize_label = resize_label
 
     def __call__(self, image, label):
-        w, h = image.size
+        h, w = image.shape[0], image.shape[1]
         if self.size:
             h, w = self.size
         temp_scale = self.scale[0] + (self.scale[1] - self.scale[0]) * random.random()
@@ -87,26 +90,27 @@ class RandomScale(object):
         if self.resize_label:
             if isinstance(label, np.ndarray):
                 # assert the shape of label is in the order of (h, w, c)
-                label = cv2.resize(label, (self.size[1], self.size[0]), cv2.INTER_NEAREST)
+                label = cv2.resize(label, (size[1], size[0]), interpolation=cv2.INTER_NEAREST)
             else:
                 label = F.resize(label, size, Image.NEAREST)
         return image, label
 
 
-class RandomCrop(object):
-    def __init__(self, size, padding=None, pad_if_needed=False, fill=0, label_fill=255, padding_mode='constant'):
-        if isinstance(size, numbers.Number):
-            self.size = (int(size), int(size))
+class RandomCrop:
+    def __init__(self, crop_size, pad_if_needed=False, fill=0, label_fill=255, padding_mode='constant'):
+        """
+        Args:
+            size (int or tuple): Crop size (height, width).
+            pad_if_needed (bool): Whether to pad if the image is smaller than the crop size.
+            fill (int): Fill value for image padding.
+            label_fill (int): Fill value for label padding.
+            padding_mode (str): Padding mode for image. One of 'constant', 'edge', 'reflect', or 'symmetric'.
+        """
+        if isinstance(crop_size, numbers.Number):
+            self.crop_size = (int(crop_size), int(crop_size))
         else:
-            self.size = size
+            self.crop_size = crop_size
 
-        if isinstance(size, numbers.Number):
-            self.padding = (padding, padding, padding, padding)
-        elif isinstance(size, tuple):
-            if padding is not None and len(padding) == 2:
-                self.padding = (padding[0], padding[1], padding[0], padding[1])
-            else:
-                self.padding = padding
         self.pad_if_needed = pad_if_needed
         self.fill = fill
         self.label_fill = label_fill
@@ -114,6 +118,7 @@ class RandomCrop(object):
 
     @staticmethod
     def get_params(img, output_size):
+        """Get crop parameters."""
         w, h = img.size
         th, tw = output_size
         if w == tw and h == th:
@@ -124,53 +129,53 @@ class RandomCrop(object):
         return i, j, th, tw
 
     def __call__(self, image, label):
-        if self.padding is not None:
-            image = F.pad(image, self.padding, self.fill, self.padding_mode)
-            if isinstance(label, np.ndarray):
-                label = np.pad(label, ((self.padding[1], self.padding[3]), (self.padding[0], self.padding[2]), (0, 0)),
-                               mode=self.padding_mode)
-            else:
-                label = F.pad(label, self.padding, self.label_fill, self.padding_mode)
+        """Apply random crop."""
+        # Apply padding to fit for the crop size
+        if self.pad_if_needed:
+            h, w = label.shape
+            pad_h = max(self.crop_size[0] - h, 0)
+            pad_w = max(self.crop_size[1] - w, 0)
+            if pad_h > 0 or pad_w > 0:
+                image = F.pad(image, (0, 0, pad_w, pad_h), self.fill, self.padding_mode)
+                label = np.pad(label, ((0, pad_h), (0, pad_w)), mode='constant', constant_values=self.label_fill)
 
-        # pad the width if needed
-        if self.pad_if_needed and image.size[0] < self.size[1]:
-            image = F.pad(image, (self.size[1] - image.size[0], 0), self.fill, self.padding_mode)
-            if isinstance(label, np.ndarray):
-                label = np.pad(label, ((0, 0), (self.size[1] - image.size[0], self.size[1] - image.size[0]), (0, 0)),
-                               mode=self.padding_mode)
-            else:
-                label = F.pad(label, (self.size[1] - label.size[0], 0), self.label_fill, self.padding_mode)
+        if image.size[0] < self.crop_size[1] or image.size[1] < self.crop_size[0]:
+            raise ValueError(f"Image size {image.size} is smaller than crop size {self.crop_size} even after padding.")
 
-        # pad the height if needed
-        if self.pad_if_needed and image.size[1] < self.size[0]:
-            image = F.pad(image, (0, self.size[0] - image.size[1]), self.fill, self.padding_mode)
-            if isinstance(label, np.ndarray):
-                label = np.pad(label, ((self.size[0] - image.size[1], self.size[0] - image.size[1]), (0, 0), (0, 0)),
-                               mode=self.padding_mode)
-            else:
-                label = F.pad(label, (0, self.size[0] - label.size[1]), self.label_fill, self.padding_mode)
-
-        i, j, h, w = self.get_params(image, self.size)
+        # Perform random cropping
+        i, j, h, w = self.get_params(image, self.crop_size)
         image = F.crop(image, i, j, h, w)
-        if isinstance(label, np.ndarray):
-            # assert the shape of label is in the order of (h, w, c)
-            label = label[i:i + h, j:j + w, :]
-        else:
-            label = F.crop(label, i, j, h, w)
+        label = label[i:i + h, j:j + w]
+
         return image, label
 
     def __repr__(self):
-        return self.__class__.__name__ + '(size={0}, padding={1})'.format(self.size, self.padding)
+        return self.__class__.__name__ + f'(size={self.crop_size}, padding={self.padding})'
 
 
-def _setup_size(size, error_msg):
-    if isinstance(size, numbers.Number):
-        return int(size), int(size)
+class RandomHorizontalFlip(object):
+    def __init__(self, p=0.5):
+        self.p = p
 
-    if isinstance(size, Sequence) and len(size) == 1:
-        return size[0], size[0]
+    def __call__(self, image, label):
+        if random.random() < self.p:
+            image = F.hflip(image)
+            if isinstance(label, np.ndarray):
+                label = cv2.flip(label, 1)
+            else:
+                label = F.hflip(label)
+        return image, label
 
-    if len(size) != 2:
-        raise ValueError(error_msg)
 
-    return size
+class RandomScale(object):
+    def __init__(self, scale: Tuple[float, float]):
+        self.scale = scale
+
+    def __call__(self, image, label):
+        h, w = label.shape
+        scale_factor = random.uniform(self.scale[0], self.scale[1])
+        h, w = int(h * scale_factor), int(w * scale_factor)
+        image = F.resize(image, (h, w), Image.BICUBIC)
+        label = F.resize(Image.fromarray(label), (h, w), Image.NEAREST)
+        label = np.array(label, dtype=np.int64)
+        return image, label

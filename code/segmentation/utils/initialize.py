@@ -153,12 +153,12 @@ def get_param_groups(model, lr_manifold, weight_decay_manifold):
     return parameters
 
 
-def select_dataset(args, validation_split=False):
+def select_dataset(cfg, validation_split=False):
     """Selects an available dataset and returns PyTorch dataloaders for training, validation and testing."""
 
-    root_dir = args.data_root
+    root_dir = cfg.data_root
 
-    if args.dataset == "cityscapes":
+    if cfg.dataset == "cityscapes":
         w, h = 1280, 640
 
         train_transform = my_transforms.Compose(
@@ -194,31 +194,75 @@ def select_dataset(args, validation_split=False):
         img_dim = [3, h, w]
         num_classes = 19
 
-    elif args.dataset == "cocostuff10k":
-        crop_size = 512
+    elif cfg.dataset == "coco":
+        w, h = 512, 512
 
-        train_set = CocoStuff10k(
-            root=root_dir,
-            split="train",
-            ignore_label=255,
-            mean_bgr=[104.008, 116.669, 122.675],
-            augment=True,
-            base_size=None,
-            crop_size=crop_size,
-            scales=[0.5, 0.75, 1.0, 1.25, 1.5],
-            flip=True,
+        train_transform = my_transforms.Compose(
+            [
+                my_transforms.RandomCrop((h, w)),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
         )
 
+        test_transform = my_transforms.Compose(
+            [
+                my_transforms.Resize((h, w), resize_label=True),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
+        )
+
+        train_set = COCOSegmentation(root_dir, split="train", transform=train_transform)
+        val_set = COCOSegmentation(root_dir, split="val", transform=test_transform)
+        test_set = COCOSegmentation(root_dir, split="val", transform=test_transform)
+
+        img_dim = [3, h, w]
+        num_classes = len(train_set.classes)
+
+    elif cfg.dataset == "cocostuff10k":
+        crop_size = 512
+
+        train_transform = my_transforms.Compose(
+            # scaling
+            [
+                my_transforms.RandomScale((0.5, 2.0)),
+                my_transforms.RandomCrop(crop_size, pad_if_needed=True),
+                my_transforms.RandomHorizontalFlip(p=0.5),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
+        )
+
+        test_transform = my_transforms.Compose(
+            [
+                my_transforms.Resize((crop_size, crop_size), resize_label=True),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
+        )
+
+        train_set = CocoStuff10k(
+            root=root_dir, split="train", transform=train_transform
+        )
         val_set = CocoStuff10k(
-            root=root_dir,
-            split="test",
-            ignore_label=255,
-            mean_bgr=[104.008, 116.669, 122.675],
-            augment=False,
-            base_size=None,
-            crop_size=crop_size,
-            scales=(1.0,),
-            flip=False,
+            root=root_dir, split="test", transform=test_transform
         )
 
         test_set = val_set
@@ -226,15 +270,48 @@ def select_dataset(args, validation_split=False):
         img_dim = [3, crop_size, crop_size]
         num_classes = 182
 
+    elif cfg.dataset == "ade20k":
+        w, h = 640, 640
+
+        train_transform = my_transforms.Compose(
+            [
+                my_transforms.RandomCrop((h, w)),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
+        )
+
+        test_transform = my_transforms.Compose(
+            [
+                my_transforms.Resize((h, w), resize_label=True),
+                my_transforms.ToTensor(),
+                my_transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225],
+                    to_bgr255=False,
+                ),
+            ]
+        )
+
+        train_set = ADE20KDataset(root_dir, split="train", transform=train_transform)
+        val_set = ADE20KDataset(root_dir, split="val", transform=test_transform)
+        test_set = ADE20KDataset(root_dir, split="val", transform=test_transform)
+
+        img_dim = [3, h, w]
+        num_classes = 150
     else:
-        raise "Selected dataset '{}' not available.".format(args.dataset)
+        raise "Selected dataset '{}' not available.".format(cfg.dataset)
 
     # Dataloader
-    train_bs = args.train_batch_size // len(args.gpus)
-    test_bs = args.test_batch_size // len(args.gpus)
+    train_bs = cfg.train_batch_size // len(cfg.gpus)
+    test_bs = cfg.test_batch_size // len(cfg.gpus)
 
     # reduce train set size for faster training
-    if args.debug:
+    if cfg.debug:
         train_set = torch.utils.data.Subset(train_set, np.arange(0, 128))
         val_set = torch.utils.data.Subset(val_set, np.arange(0, 32))
         test_set = torch.utils.data.Subset(test_set, np.arange(0, 32))
@@ -323,6 +400,8 @@ def check_config(cfg):
     assert isinstance(cfg.radius_label_smoothing, bool)
     assert isinstance(cfg.dataset, str) and cfg.dataset in [
         "cityscapes",
+        "ade20k",
+        "coco",
         "cocostuff10k",
     ]
     assert isinstance(cfg.wandb, bool)
