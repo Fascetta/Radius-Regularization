@@ -2,9 +2,9 @@ dataset: cocostuff10k
 data_root: code/segmentation/data/cocostuff10k
 
 # General training hyperparameters
-num_epochs: 10
-batch_size: 2
-lr: 6e-5
+num_epochs: 20
+batch_size: 6
+lr: 1e-5
 weight_decay: 1e-2
 use_lr_scheduler: True
 lr_scheduler: CosineAnnealingLR             # CosineAnnealingLR or MultiStepLR

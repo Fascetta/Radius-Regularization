@@ -34,12 +34,10 @@ def main(cfg):
         precision="16-mixed",
     )
 
-    punct = "=" * 30
-    
-    print(f"\n{punct} Testing without calibration {punct}\n")
-    trainer.test(model, test_loader, cfg.checkpoint_path)
+    print("\nTesting the following model:")
+    print("="*30, f"{ckpt_cfg.exp_name}", "="*30)
+    print()
 
-    print(f"\n{punct} Testing with calibration {punct}\n")
     model.test_calibration = True
     trainer.test(model, test_loader, cfg.checkpoint_path)
 

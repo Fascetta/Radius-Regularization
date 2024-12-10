@@ -1,6 +1,6 @@
 # Output settings
 exp_name: EP-Segformer-b0_RAL1
-notes: "Training with RAL=1"
+notes: ""
 
 # General settings
 gpus: [0,1,2,3,4,5]
@@ -10,18 +10,17 @@ debug: False
 model_size: b0
 
 # General training hyperparameters
-ral_initial_alpha: 0.
+ral_initial_alpha: 1.
 ral_final_alpha: 1.
-radius_conf_loss: 1.
+radius_conf_loss: 0.
 radius_label_smoothing: False
 
 # Training hyperparameters
 model: euclidean-poincare
-dataset: cityscapes
+dataset: cocostuff10k
 
 # Logging
 wandb: True
 
 # Test
-# checkpoint_path: "code/segmentation/output/cityscapes/best_epoch-epoch=28_val_mIoU-val_mIoU=42.71.ckpt"
 test_batch_size: 6

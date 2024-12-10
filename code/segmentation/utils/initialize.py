@@ -465,8 +465,8 @@ def get_config():
     cfg.output_dir = os.path.join(
         cfg.output_dir, str(cfg.dataset).lower(), cfg.exp_name
     )
-    print("Saving to {}".format(cfg.output_dir))
     check_config(cfg)
     cfg.freeze()
+    print("Saving to {}".format(cfg.output_dir))
 
     return cfg

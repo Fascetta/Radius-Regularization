@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from lib.geoopt.optim import RiemannianAdam, RiemannianSGD
 from losses.focal_loss import FocalLoss
 from losses.radius_loss import RadiusAccuracyLoss
+from torchmetrics.classification import MulticlassJaccardIndex
 from utils.initialize import select_dataset, select_model
 from utils.metrics import calculate_ece, intersectionAndUnionGPU
 from utils.posthoc_calibration_utils import get_optimal_confidence_tau
@@ -98,90 +99,51 @@ class TrainLearner(pl.LightningModule):
         size = label.shape[-2:]
         logits, _ = self.forward(image, size=size)
         logits = F.interpolate(logits, size=size, mode="bilinear", align_corners=True)
-
         preds = F.softmax(logits, dim=1)
         return preds, logits
 
     def on_validation_start(self):
-        self.intersections = torch.zeros(self.num_classes, device=self.device)
-        self.unions = torch.zeros(self.num_classes, device=self.device)
-        self.targets = torch.zeros(self.num_classes, device=self.device)
-        self.ece_sum = 0.0
-        self.ece_count = 0
+        self.mIoU_metric = MulticlassJaccardIndex(
+            num_classes=self.num_classes,
+            ignore_index=255,
+            average="micro",
+        ).to(self.device)
 
-    def validation_forward(self, batch, tau=None):
+    def validation_forward(self, batch, tau=None, mode="val"):
         x, y = batch
         if len(y.shape) == 4:
             y = y.permute(0, 3, 1, 2).squeeze(1)
 
-        size = y.shape[-2:]
-        logits, _ = self.forward(x, size=size)
-        logits = F.interpolate(logits, size=size, mode="bilinear", align_corners=True)
+        preds, logits = self.inference(x, y)
         preds = F.softmax(logits, dim=1)
         output = preds.argmax(dim=1)
 
-        if tau is not None:
-            logits = logits / tau
+        # calculate mIoU
+        miou = self.mIoU_metric(output, y) * 100
+        self.log(f"{mode}/mIoU", miou, on_step=False, on_epoch=True, sync_dist=True)
+        if mode == "val":
+            self.log("val_mIoU", miou, on_epoch=True, sync_dist=True, prog_bar=False)
 
-        intersection, union, target = intersectionAndUnionGPU(
-            output, y, self.num_classes, ignore_index=255
-        )
+        # calculate loss
+        if mode == "val":
+            loss = self.criterion(logits, y)
+            self.log(f"{mode}/loss", loss, on_step=False, on_epoch=True, sync_dist=True)
 
-        self.intersections += intersection
-        self.unions += union
-        self.targets += target
-
-        loss = self.criterion(logits, y)
-
+        # calculate ECE
         # flatten the logits and labels
         logits = logits.view(-1, self.num_classes)
         y = y.view(-1)
+        ece = calculate_ece(logits, y, n_bins=15)
+        self.log(f"{mode}/ece", ece, on_step=False, on_epoch=True, sync_dist=True)
 
-        # ece = calculate_ece(logits, y, n_bins=15)
-        # self.ece_sum += ece
-        # self.ece_count += 1
-
-        # divide into batches of m pixels to avoid memory issues
-        m = self.ece_batch_size
-        n_batches = logits.shape[0] // m
-        for j in range(n_batches):
-            logits_batch = logits[j * m : (j + 1) * m]
-            y_batch = y[j * m : (j + 1) * m]
-            ece = calculate_ece(logits_batch, y_batch, n_bins=15)
-            self.ece_sum += ece
-            self.ece_count += 1
-
-        return loss
+        if tau is not None:
+            logits = logits / tau
+            ece_ts = calculate_ece(logits, y, n_bins=15)
+            self.log(f"{mode}/ece_ts", ece_ts, on_step=False, on_epoch=True, sync_dist=True)
+            
 
     def validation_step(self, batch, batch_idx):
-        loss = self.validation_forward(batch, tau=None)
-        self.log("val/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
-
-    def validation_end(self):
-        # gather all the metrics across all the processes
-        intersections = self.all_gather(self.intersections).sum(dim=0)
-        unions = self.all_gather(self.unions).sum(dim=0)
-        targets = self.all_gather(self.targets).sum(dim=0)
-
-        iou_class = intersections / (unions + 1e-10)
-        accuracy_class = intersections / (targets + 1e-10)
-
-        mIoU = iou_class.mean() * 100
-        mAcc = accuracy_class.mean() * 100
-        aAcc = intersections.sum() / (targets.sum() + 1e-10) * 100
-
-        ece = self.ece_sum / self.ece_count
-
-        return mIoU, mAcc, aAcc, ece
-
-    def on_validation_epoch_end(self):
-        mIoU, mAcc, aAcc, ece = self.validation_end()
-        self.log("val/ece", ece, on_epoch=True, sync_dist=True, prog_bar=True)
-        self.log("val/mIoU", mIoU, on_epoch=True, sync_dist=True, prog_bar=True)
-        self.log("val/mAcc", mAcc, on_epoch=True, sync_dist=True, prog_bar=False)
-        self.log("val/aAcc", aAcc, on_epoch=True, sync_dist=True, prog_bar=False)
-        self.print(f"\nEpoch: {self.current_epoch}, ECE: {ece:.2f}\n")
-        self.log("val_mIoU", mIoU, on_epoch=True, sync_dist=True, prog_bar=False)
+        self.validation_forward(batch, tau=None)
 
     def on_test_start(self):
         self.on_validation_start()
@@ -196,15 +158,7 @@ class TrainLearner(pl.LightningModule):
             self.tau = 2.0
 
     def test_step(self, batch, batch_idx):
-        loss = self.validation_forward(batch, tau=self.tau)
-        self.log("test/loss", loss, on_epoch=True, sync_dist=True)
-
-    def on_test_epoch_end(self):
-        mIoU, mAcc, aAcc, ece = self.validation_end()
-        self.log("test/ece", ece, on_epoch=True, sync_dist=True)
-        self.log("test/mIoU", mIoU, on_epoch=True, sync_dist=True)
-        # self.log("test/mAcc", mAcc, on_epoch=True, sync_dist=True)
-        # self.log("test/aAcc", aAcc, on_epoch=True, sync_dist=True)
+        self.validation_forward(batch, tau=self.tau, mode="test")
 
     def configure_optimizers(self):
         if self.cfg.optimizer == "Adam":
