@@ -43,24 +43,24 @@ class CalibrationMetrics:
 
 
 def intersectionAndUnionGPU(output, target, K, ignore_index=255):
-    # 'K' classes, output and target sizes are N or N * L or N * H * W, each value in range 0 to K - 1.
-    assert output.dim() in [1, 2, 3], f"output dim must be 1, 2 or 3, but got {output.dim()}"
-    assert output.shape == target.shape, f"output and target shapes do not match: {output.shape} != {target.shape}"
+    """Calculate intersection and union for GPU tensors."""
+    assert output.dim() in [1, 2, 3], f"Output dim must be 1, 2, or 3 but got {output.dim()}"
+    assert output.shape == target.shape, f"Shapes do not match: {output.shape} != {target.shape}"
+
     output = output.view(-1)
     target = target.view(-1)
-    output[target == ignore_index] = ignore_index
+
+    mask = target != ignore_index
+    output = output[mask]
+    target = target[mask]
+
     intersection = output[output == target]
-    area_intersection = torch.histc(
-        intersection.float().cpu(), bins=K, min=0, max=K - 1
-    )
-    area_output = torch.histc(output.float().cpu(), bins=K, min=0, max=K - 1)
-    area_target = torch.histc(target.float().cpu(), bins=K, min=0, max=K - 1)
+    area_intersection = torch.histc(intersection.float(), bins=K, min=0, max=K - 1)
+    area_output = torch.histc(output.float(), bins=K, min=0, max=K - 1)
+    area_target = torch.histc(target.float(), bins=K, min=0, max=K - 1)
     area_union = area_output + area_target - area_intersection
-    return (
-        area_intersection.cpu().numpy(),
-        area_union.cpu().numpy(),
-        area_target.cpu().numpy(),
-    )
+
+    return area_intersection, area_union, area_target
 
 
 def calculate_ece(logits, labels, n_bins=15):

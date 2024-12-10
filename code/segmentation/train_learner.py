@@ -44,10 +44,10 @@ class TrainLearner(pl.LightningModule):
         self.test_calibration = False
         self.ece_batch_size = 2**13
 
-    def on_fit_start(self):
-        self.print(f"Training for {self.cfg.num_epochs} epochs")
-        self.print(f"Using radius accuracy loss with alpha = {self.ral_alpha}")
-        self.print(f"Using {self.cfg.lr_scheduler} scheduler")
+    def on_train_start(self):
+        self.print("\nModel initialized with the following configuration:")
+        self.print(self.cfg)
+        self.print("\n")
 
     def forward(self, x, size=None):
         return self.model(x, size=size)
@@ -103,11 +103,11 @@ class TrainLearner(pl.LightningModule):
         return preds, logits
 
     def on_validation_start(self):
-        self.radii = []
-        self.ece = np.array([])
-        self.intersections = np.array([])
-        self.unions = np.array([])
-        self.targets = np.array([])
+        self.intersections = torch.zeros(self.num_classes, device=self.device)
+        self.unions = torch.zeros(self.num_classes, device=self.device)
+        self.targets = torch.zeros(self.num_classes, device=self.device)
+        self.ece_sum = 0.0
+        self.ece_count = 0
 
     def validation_forward(self, batch, tau=None):
         x, y = batch
@@ -118,7 +118,7 @@ class TrainLearner(pl.LightningModule):
         logits, _ = self.forward(x, size=size)
         logits = F.interpolate(logits, size=size, mode="bilinear", align_corners=True)
         preds = F.softmax(logits, dim=1)
-        output = preds.max(1)[1]
+        output = preds.argmax(dim=1)
 
         if tau is not None:
             logits = logits / tau
@@ -127,28 +127,19 @@ class TrainLearner(pl.LightningModule):
             output, y, self.num_classes, ignore_index=255
         )
 
-        intersection = np.expand_dims(intersection, axis=0)
-        union = np.expand_dims(union, axis=0)
-        target = np.expand_dims(target, axis=0)
-
-        if self.intersections.size == 0:
-            self.intersections = intersection
-            self.unions = union
-            self.targets = target
-        else:
-            self.intersections = np.concatenate((self.intersections, intersection), axis=0)
-            self.unions = np.concatenate((self.unions, union), axis=0)
-            self.targets = np.concatenate((self.targets, target), axis=0)
+        self.intersections += intersection
+        self.unions += union
+        self.targets += target
 
         loss = self.criterion(logits, y)
 
         # flatten the logits and labels
-        logits = (
-            logits.view(logits.shape[0], logits.shape[1], -1)
-            .permute(0, 2, 1)
-            .reshape(-1, logits.shape[1])
-        )
-        y = y.view(-1, 1)
+        logits = logits.view(-1, self.num_classes)
+        y = y.view(-1)
+
+        # ece = calculate_ece(logits, y, n_bins=15)
+        # self.ece_sum += ece
+        # self.ece_count += 1
 
         # divide into batches of m pixels to avoid memory issues
         m = self.ece_batch_size
@@ -156,31 +147,21 @@ class TrainLearner(pl.LightningModule):
         for j in range(n_batches):
             logits_batch = logits[j * m : (j + 1) * m]
             y_batch = y[j * m : (j + 1) * m]
-            ece_i = calculate_ece(logits_batch, y_batch, n_bins=15)
-            self.ece = np.append(self.ece, ece_i)
+            ece = calculate_ece(logits_batch, y_batch, n_bins=15)
+            self.ece_sum += ece
+            self.ece_count += 1
 
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self.validation_forward(batch)
+        loss = self.validation_forward(batch, tau=None)
         self.log("val/loss", loss, on_epoch=True, prog_bar=True, sync_dist=True)
 
     def validation_end(self):
         # gather all the metrics across all the processes
-        intersections = self.all_gather(self.intersections)
-        unions = self.all_gather(self.unions)
-        targets = self.all_gather(self.targets)
-        eces = self.all_gather(self.ece)
-
-        intersections = intersections.flatten(0, 1)
-        unions = unions.flatten(0, 1)
-        targets = targets.flatten(0, 1)
-        eces = eces.flatten()
-
-        # calculate the final mean iou and accuracy
-        intersections = intersections.sum(axis=0)
-        unions = unions.sum(axis=0)
-        targets = targets.sum(axis=0)
+        intersections = self.all_gather(self.intersections).sum(dim=0)
+        unions = self.all_gather(self.unions).sum(dim=0)
+        targets = self.all_gather(self.targets).sum(dim=0)
 
         iou_class = intersections / (unions + 1e-10)
         accuracy_class = intersections / (targets + 1e-10)
@@ -189,7 +170,7 @@ class TrainLearner(pl.LightningModule):
         mAcc = accuracy_class.mean() * 100
         aAcc = intersections.sum() / (targets.sum() + 1e-10) * 100
 
-        ece = eces.mean()
+        ece = self.ece_sum / self.ece_count
 
         return mIoU, mAcc, aAcc, ece
 
