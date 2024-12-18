@@ -87,7 +87,12 @@ class TrainLearner(pl.LightningModule):
 
         if self.use_RAL:
             self.log(
-                "train/radius_loss", ral, on_step=True, on_epoch=True, sync_dist=True
+                "train/radius_loss",
+                ral,
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+                prog_bar=True,
             )
 
         lr = self.lr_schedulers().get_last_lr()[0]
@@ -139,8 +144,9 @@ class TrainLearner(pl.LightningModule):
         if tau is not None:
             logits = logits / tau
             ece_ts = calculate_ece(logits, y, n_bins=15)
-            self.log(f"{mode}/ece_ts", ece_ts, on_step=False, on_epoch=True, sync_dist=True)
-            
+            self.log(
+                f"{mode}/ece_ts", ece_ts, on_step=False, on_epoch=True, sync_dist=True
+            )
 
     def validation_step(self, batch, batch_idx):
         self.validation_forward(batch, tau=None)

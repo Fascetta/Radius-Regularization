@@ -4,7 +4,6 @@ import pytorch_lightning as pl
 import torch
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
-
 from train_learner import TrainLearner
 from utils.initialize import get_config, select_dataset
 
@@ -29,7 +28,7 @@ def main(cfg):
             notes=cfg.notes,
         )
 
-    checkpoint_callback = ModelCheckpoint(
+    best_checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.output_dir,
         filename="best_{epoch}_{val_mIoU:.2f}",
         save_top_k=1,
@@ -45,7 +44,7 @@ def main(cfg):
         mode="max",
     )
 
-    callbacks = [checkpoint_callback, final_checkpoint_callback]
+    callbacks = [best_checkpoint_callback, final_checkpoint_callback]
 
     trainer = pl.Trainer(
         max_epochs=cfg.num_epochs,
@@ -59,13 +58,16 @@ def main(cfg):
 
     trainer.fit(model, train_loader, val_loader, ckpt_path=cfg.checkpoint_path)
 
+    # load the best model and test it
+    best_model_path = best_checkpoint_callback.best_model_path
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=[cfg.gpus[0]],
         logger=logger,
         precision="16-mixed",
     )
-    trainer.test(model, test_loader)
+    model.test_calibration = True
+    trainer.test(model, test_loader, best_model_path)
 
 
 if __name__ == "__main__":
