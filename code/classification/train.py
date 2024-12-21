@@ -24,7 +24,7 @@ import torch
 import wandb
 from classification.losses.focal_loss import FocalLoss
 from classification.losses.radius_label_smoothing import RadiusLabelSmoothing
-from classification.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss
+from classification.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss #, WeightedRadiusAccuracyLoss
 from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.initialize import (
     get_config,
@@ -103,6 +103,7 @@ def main(cfg):
     if cfg.ral_initial_alpha > 0.0 or cfg.ral_final_alpha > 0.0:
         use_RAL = True
         radius_acc_loss = RadiusAccuracyLoss()
+        # radius_acc_loss = WeightedRadiusAccuracyLoss()
         ral_initial_alpha = cfg.ral_initial_alpha
         ral_alpha = ral_initial_alpha
         ral_final_alpha = cfg.ral_final_alpha
@@ -426,14 +427,26 @@ def evaluate(
         cm.update(logits, y)
 
     calib_metrics = cm.compute()
-    fabric.print("\n===== Calibration metrics ===== \n")
+    if fabric:
+        fabric.print("\n===== Calibration metrics ===== \n")
+    else:
+        print("\n===== Calibration metrics ===== \n")
     for k, v in calib_metrics.items():
-        fabric.print(f"{k.upper()}: {round(v, 4)}")
-    fabric.print("\n=============================== \n")
+        if fabric:
+            fabric.print(f"{k.upper()}: {round(v, 4)}")
+        else:
+            print(f"{k.upper()}: {round(v, 4)}")
+    if fabric:
+        fabric.print("\n=============================== \n")
+    else:
+        print("\n=============================== \n")
 
     radii = np.concatenate(radii)
     avg_radius = np.mean(radii)
-    fabric.print(f"Average norm: {avg_radius}")
+    if fabric:
+        fabric.print(f"Average norm: {avg_radius}")
+    else:
+        print(f"Average norm: {avg_radius}")
 
     return losses.avg, acc1.avg, acc5.avg, calib_metrics
 

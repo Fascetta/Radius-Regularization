@@ -17,8 +17,8 @@ _C.seed = 1
 
 # Test
 _C.load_checkpoint = None
-_C.mode = None
-_C.calibration = None
+_C.mode = "calibrate"
+_C.calibration = "confidence"
 
 # General training hyperparameters
 _C.num_epochs = 200
