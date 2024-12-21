@@ -22,7 +22,12 @@ from lib.utils.visualize import visualize_embeddings
 from torch.nn import DataParallel
 from tqdm import tqdm
 from train import evaluate
-from utils.initialize import load_model_checkpoint, select_dataset, select_model
+from utils.initialize import (
+    get_config,
+    load_model_checkpoint,
+    select_dataset,
+    select_model,
+)
 from utils.posthoc_calibration_utils import (
     get_optimal_confidence_tau,
     get_optimal_radius_tau,
@@ -169,7 +174,7 @@ def getArguments():
 
 
 def main(args):
-    device = args.device[0]
+    device = args.gpus[0]
     torch.cuda.set_device(device)
     torch.cuda.empty_cache()
 
@@ -197,7 +202,7 @@ def main(args):
     else:
         print("No model checkpoint given. Using random weights.")
 
-    model = DataParallel(model, device_ids=args.device)
+    model = DataParallel(model, device_ids=args.gpus)
     model.eval()
 
     if args.mode == "test_accuracy":
@@ -359,17 +364,17 @@ def pgd_attack(x, x_in, epsilon=0.3):
 
 # ----------------------------------
 if __name__ == "__main__":
-    args = getArguments()
+    cfg = get_config()
 
-    if args.dtype == "float64":
+    if cfg.dtype == "float64":
         torch.set_default_dtype(torch.float64)
-    elif args.dtype == "float32":
+    elif cfg.dtype == "float32":
         torch.set_default_dtype(torch.float32)
     else:
-        raise "Wrong dtype in configuration -> " + args.dtype
+        raise "Wrong dtype in configuration -> " + cfg.dtype
 
-    torch.manual_seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
+    torch.manual_seed(cfg.seed)
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
 
-    main(args)
+    main(cfg)

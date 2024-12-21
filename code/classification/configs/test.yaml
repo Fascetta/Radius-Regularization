@@ -1,0 +1,21 @@
+# Output settings
+exp_name: EP-ResNet18_WAL1
+notes: ""
+
+# General settings
+gpus: [1]
+seed: 1
+load_checkpoint: "classification/output/tiny-imagenet/best_EP-ResNet18_RAL.pth"
+
+# General training hyperparameters
+ral_initial_alpha: 1.
+ral_final_alpha: 1.
+radius_conf_loss: 0.
+radius_label_smoothing: False
+
+# Training hyperparameters
+model: euclidean-poincare
+dataset: Tiny-ImageNet
+
+# Logging
+wandb: False
