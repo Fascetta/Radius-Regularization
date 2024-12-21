@@ -27,8 +27,70 @@ class RadiusAccuracyLoss:
     def __call__(self, logits, labels, radii):
         accuracy = self.compute_batch_accuracy_per_class(logits, labels)
         true_class_accuracy = accuracy[labels]
-        # radii = -torch.log(radii + 1.)
         loss = F.mse_loss(radii, true_class_accuracy)
+        return loss
+
+
+class WeightedRadiusAccuracyLoss(RadiusAccuracyLoss):
+    """Loss function for weighted radius-based accuracy calibration."""
+
+    @staticmethod
+    def compute_weighted_radius_per_class(logits, labels, radii):
+        """
+        Computes the weighted average radius for each class in the batch.
+
+        Args:
+            logits: Logits from the model (batch_size, n_classes).
+            labels: True class labels (batch_size,).
+            radii: Radii of the embeddings in hyperbolic space (batch_size,).
+
+        Returns:
+            weighted_radius: Weighted average radius for each class (n_classes,).
+        """
+        n_classes = logits.shape[-1]
+        weights = F.softmax(logits, dim=-1)  # Confidence scores
+        sample_weights = weights[
+            torch.arange(labels.size(0)), labels
+        ]  # Weight per sample
+
+        # Initialize accumulators
+        total_weights = torch.zeros(n_classes, device=logits.device)
+        weighted_radii = torch.zeros(n_classes, device=logits.device)
+
+        # Accumulate weighted radii and weights
+        total_weights.index_add_(0, labels, sample_weights)
+        weighted_radii.index_add_(0, labels, sample_weights * radii)
+
+        # Compute weighted radius per class
+        weighted_radius = torch.zeros(n_classes, device=logits.device)
+        weighted_radius[total_weights > 0] = (
+            weighted_radii[total_weights > 0] / total_weights[total_weights > 0]
+        )
+
+        return weighted_radius
+
+    def __call__(self, logits, labels, radii):
+        """
+        Computes the RadiusAccuracyLoss with weighted radii.
+
+        Args:
+            logits: Logits from the model (batch_size, n_classes).
+            labels: True class labels (batch_size,).
+            radii: Radii of the embeddings in hyperbolic space (batch_size,).
+
+        Returns:
+            Loss: Mean squared error between weighted radii and accuracy per class.
+        """
+        # Compute batch accuracy per class (inherited from superclass)
+        accuracy = self.compute_batch_accuracy_per_class(logits, labels)
+
+        # Compute weighted radii per class
+        weighted_radius = self.compute_weighted_radius_per_class(logits, labels, radii)
+
+        # Calculate MSE between weighted radii and accuracy per class
+        loss = F.mse_loss(
+            weighted_radius, accuracy, reduction="sum"
+        )  # Reduce by sum for stability
         return loss
 
 
@@ -37,7 +99,7 @@ class RadiusConfidenceLoss:
 
     def __init__(self, n_bins=15):
         self.n_bins = n_bins
-        self.radii_running_max = 0.
+        self.radii_running_max = 0.0
 
     def __call__(self, logits, labels, radii):
         # confidences = torch.max(logits.softmax(dim=-1), dim=-1).values
