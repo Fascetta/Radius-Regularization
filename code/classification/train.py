@@ -21,10 +21,13 @@ import random
 import configargparse
 import numpy as np
 import torch
-import wandb
 from classification.losses.focal_loss import FocalLoss
 from classification.losses.radius_label_smoothing import RadiusLabelSmoothing
-from classification.losses.radius_loss import RadiusAccuracyLoss, RadiusConfidenceLoss #, WeightedRadiusAccuracyLoss
+from classification.losses.radius_loss import (
+    RadiusAccuracyLoss,
+    RadiusConfidenceLoss,
+    WeightedRadiusAccuracyLoss,
+)
 from classification.utils.calibration_metrics import CalibrationMetrics
 from classification.utils.initialize import (
     get_config,
@@ -37,6 +40,8 @@ from lib.utils.utils import AverageMeter, accuracy
 from lightning.fabric import Fabric
 from torch.nn import DataParallel
 from tqdm import tqdm
+
+import wandb
 
 
 def main(cfg):
@@ -184,7 +189,9 @@ def main(cfg):
                         # Compute decayed/increased alpha
                         diff = ral_initial_alpha - ral_final_alpha
                         curr_epoch = min(epoch, final_epoch)
-                        ral_alpha = ral_initial_alpha - (curr_epoch / final_epoch) * diff
+                        ral_alpha = (
+                            ral_initial_alpha - (curr_epoch / final_epoch) * diff
+                        )
                     ral = radius_acc_loss(logits, y, radii) * ral_alpha
                 else:
                     ral = torch.zeros_like(ce_loss)

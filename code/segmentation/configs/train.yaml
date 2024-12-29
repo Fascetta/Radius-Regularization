@@ -1,5 +1,5 @@
 # Output settings
-exp_name: EP-Segformer-b0_RAL1
+exp_name: EP-Segformer-b5_RAL1
 notes: ""
 
 # General settings
@@ -7,7 +7,7 @@ gpus: [0,1,2,3,4,5]
 seed: 1
 train_batch_size: 6
 debug: False
-model_size: b0
+model_size: b5
 
 # General training hyperparameters
 ral_initial_alpha: 1.
@@ -17,7 +17,7 @@ radius_label_smoothing: False
 
 # Training hyperparameters
 model: euclidean-poincare
-dataset: cocostuff10k
+dataset: cityscapes
 
 # Logging
 wandb: True

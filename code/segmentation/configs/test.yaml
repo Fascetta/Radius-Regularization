@@ -13,5 +13,5 @@ wandb: False
 debug: False
 
 # Test
-checkpoint_path: "code/segmentation/output/cocostuff10k/EP-Segformer-b0_20epochs/best_epoch=18_val_mIoU=10.75.ckpt"
+checkpoint_path: "code/segmentation/output/cocostuff10k/EP-Segformer-b0_RAL1/best_epoch=17_val_mIoU=35.33.ckpt"
 test_batch_size: 6

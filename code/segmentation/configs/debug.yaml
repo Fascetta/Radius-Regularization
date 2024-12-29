@@ -9,14 +9,14 @@ train_batch_size: 2
 debug: True
 
 # General training hyperparameters
-ral_initial_alpha: 0.
-ral_final_alpha: 0.
+ral_initial_alpha: .1
+ral_final_alpha: .1
 radius_conf_loss: 0.
 radius_label_smoothing: False
 
 # Training hyperparameters
 model: euclidean-poincare
-dataset: cocostuff10k
+dataset: cityscapes
 model_size: b0
 
 # Logging
